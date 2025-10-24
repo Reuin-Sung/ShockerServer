@@ -145,15 +145,19 @@ const requestCertificate = async (domain) => {
         }
       }),
       new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Certificate request timeout after 5 minutes')), 1 * 60 * 1000)
+        setTimeout(() => reject(new Error('Certificate request timeout after 1 minute')), 1 * 60 * 1000)
       )
     ]);
     
-    // Save certificate
+    // Save certificate and key
     const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);
+    const keyPath = path.join(acmeConfig.certDir, `${domain}-key.pem`);
     fs.writeFileSync(certPath, cert);
+    fs.writeFileSync(keyPath, certKey);
     
     console.log(`✅ Certificate created for ${domain}`);
+    console.log(`📁 Certificate saved: ${certPath}`);
+    console.log(`🔑 Key saved: ${keyPath}`);
     return { key: certKey, cert };
     
   } catch (error) {
@@ -172,10 +176,14 @@ const getCertificate = async (domain) => {
       throw new Error(`Certificate not found for ${domain}`);
     }
     
-    return {
-      key: fs.readFileSync(keyPath),
-      cert: fs.readFileSync(certPath)
-    };
+    const key = fs.readFileSync(keyPath);
+    const cert = fs.readFileSync(certPath);
+    
+    console.log(`📜 Loading certificate for ${domain}`);
+    console.log(`🔑 Key size: ${key.length} bytes`);
+    console.log(`📄 Cert size: ${cert.length} bytes`);
+    
+    return { key, cert };
   } catch (error) {
     console.error(`❌ Failed to get certificate for ${domain}:`, error.message);
     throw error;

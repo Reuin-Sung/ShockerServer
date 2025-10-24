@@ -145,7 +145,7 @@ const requestCertificate = async (domain) => {
         }
       }),
       new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Certificate request timeout after 5 minutes')), 5 * 60 * 1000)
+        setTimeout(() => reject(new Error('Certificate request timeout after 5 minutes')), 1 * 60 * 1000)
       )
     ]);
     

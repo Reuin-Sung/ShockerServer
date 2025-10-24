@@ -23,6 +23,9 @@ const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 app.use(cors());
 app.use(express.json());
 
+// Serve ACME challenge files for Let's Encrypt
+app.use('/.well-known/acme-challenge', express.static(path.join(__dirname, 'public', '.well-known', 'acme-challenge')));
+
 // In-memory storage for shocker state
 let shockerState = {
   isOn: false,

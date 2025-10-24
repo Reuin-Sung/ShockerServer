@@ -109,35 +109,33 @@ const requestCertificate = async (domain) => {
       contact: [`mailto:${acmeConfig.email}`]
     });
     
-    // Create order
-    const order = await client.createOrder({
-      identifiers: [{ type: 'dns', value: domain }]
-    });
-    
-    // Get authorization
-    const authz = await client.getAuthorization(order.authorizations[0]);
-    
-    // Create HTTP-01 challenge
-    const challenge = authz.challenges.find(c => c.type === 'http-01');
-    const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
-    
-    // Serve challenge file
-    const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
-    fs.mkdirSync(path.dirname(challengePath), { recursive: true });
-    fs.writeFileSync(challengePath, keyAuthorization);
-    
-    // Verify challenge
-    await client.verifyChallenge(authz, challenge);
-    await client.completeChallenge(challenge);
-    await client.waitForValidStatus(challenge);
-    
-    // Create certificate
+    // Create CSR
     const [key, csr] = await acme.forge.createCsr({
       commonName: domain,
       key: certKey
     });
     
-    const cert = await client.getCertificate(order);
+    // Use the auto method which handles everything
+    const cert = await client.auto({
+      csr,
+      email: acmeConfig.email,
+      termsOfServiceAgreed: true,
+      challengeCreateFn: async (authz, challenge, keyAuthorization) => {
+        // Serve challenge file
+        const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
+        fs.mkdirSync(path.dirname(challengePath), { recursive: true });
+        fs.writeFileSync(challengePath, keyAuthorization);
+        console.log(`📁 Challenge file created: ${challengePath}`);
+      },
+      challengeRemoveFn: async (authz, challenge) => {
+        // Remove challenge file
+        const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
+        if (fs.existsSync(challengePath)) {
+          fs.unlinkSync(challengePath);
+          console.log(`🗑️ Challenge file removed: ${challengePath}`);
+        }
+      }
+    });
     
     // Save certificate
     const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);

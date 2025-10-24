@@ -19,10 +19,7 @@
     "cors": "^2.8.5",
     "https": "^1.0.0",
     "fs": "^0.0.1-security",
-    "greenlock": "^4.0.0",
-    "greenlock-express": "^4.0.0",
-    "greenlock-store-fs": "^3.0.0",
-    "acme-http-01-standalone": "^2.0.0"
+    "node-letsencrypt": "^2.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

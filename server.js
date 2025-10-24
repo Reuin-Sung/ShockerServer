@@ -4,10 +4,9 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const greenlockExpress = require('greenlock-express');
 const { 
-  greenlockConfig, 
-  initializeGreenlock, 
+  leConfig, 
+  initializeLetsEncrypt, 
   hasValidCertificate, 
   getSSLOptions,
   requestCertificate 
@@ -158,8 +157,8 @@ const setupSSL = async () => {
   try {
     console.log('🔒 Setting up Let\'s Encrypt SSL certificates...');
     
-    // Initialize Greenlock
-    initializeGreenlock();
+    // Initialize Let's Encrypt
+    initializeLetsEncrypt();
     
     // Check if we have a valid certificate
     const hasCert = await hasValidCertificate(domain);

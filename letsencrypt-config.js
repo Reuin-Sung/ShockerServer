@@ -1,77 +1,52 @@
-const greenlock = require('greenlock');
+const letsencrypt = require('node-letsencrypt');
 const path = require('path');
-const packageJson = require('./package.json');
+const fs = require('fs');
 
 // Let's Encrypt configuration
-const greenlockConfig = {
-  // Let's Encrypt v2 staging server (for testing)
-  // Change to 'https://acme-v02.api.letsencrypt.org/directory' for production
+const leConfig = {
+  // Let's Encrypt server (staging for testing, production for live)
   server: process.env.NODE_ENV === 'production' 
     ? 'https://acme-v02.api.letsencrypt.org/directory'
     : 'https://acme-staging-v02.api.letsencrypt.org/directory',
   
   // Email for Let's Encrypt notifications
   email: process.env.LE_EMAIL || 'resung25@proton.me',
-  maintainerEmail: process.env.LE_EMAIL || 'resung25@proton.me',
   
   // Agree to Let's Encrypt terms of service
   agreeTos: true,
   
   // Store certificates in ./certs directory
-  configDir: path.join(__dirname, 'certs'),
+  certDir: path.join(__dirname, 'certs'),
   
   // Domains to secure
   domains: process.env.DOMAINS ? process.env.DOMAINS.split(',') : ['localhost'],
   
-  // Package agent for Let's Encrypt
-  packageAgent: `${packageJson.name}/${packageJson.version}`,
-  
   // Certificate renewal settings
   renewWithin: 14 * 24 * 60 * 60 * 1000, // 14 days
   renewBy: 10 * 24 * 60 * 60 * 1000,      // 10 days
-  
-  // Security settings
-  securityUpdates: true,
-  
-  // Logging
-  logLevel: 'info',
-  
-  // ACME challenge handling
-  challenges: {
-    'http-01': {
-      module: 'acme-http-01-standalone',
-      webroot: path.join(__dirname, 'public')
-    }
-  },
-  
-  // Additional configuration
-  store: {
-    module: 'greenlock-store-fs',
-    basePath: path.join(__dirname, 'certs')
-  }
 };
 
-// Initialize Greenlock
-let greenlockInstance = null;
+// Initialize Let's Encrypt
+let leInstance = null;
 
-const initializeGreenlock = () => {
-  if (!greenlockInstance) {
+const initializeLetsEncrypt = () => {
+  if (!leInstance) {
     try {
-      greenlockInstance = greenlock.create(greenlockConfig);
-      console.log('🔒 Let\'s Encrypt Greenlock initialized');
+      leInstance = letsencrypt.create(leConfig);
+      console.log('🔒 Let\'s Encrypt initialized');
     } catch (error) {
-      console.error('❌ Failed to initialize Greenlock:', error.message);
+      console.error('❌ Failed to initialize Let\'s Encrypt:', error.message);
       throw error;
     }
   }
-  return greenlockInstance;
+  return leInstance;
 };
 
 // Get certificate for domain
 const getCertificate = async (domain) => {
   try {
-    const gl = initializeGreenlock();
-    const cert = await gl.get({ servername: domain });
+    const le = initializeLetsEncrypt();
+    const cert = await le.get({ servername: domain });
     return cert;
   } catch (error) {
     console.error(`❌ Failed to get certificate for ${domain}:`, error.message);
@@ -82,11 +57,10 @@ const getCertificate = async (domain) => {
 // Request new certificate
 const requestCertificate = async (domain) => {
   try {
-    const gl = initializeGreenlock();
-    const cert = await gl.register({
+    const le = initializeLetsEncrypt();
+    const cert = await le.register({
       domains: [domain],
-      email: greenlockConfig.email,
-      maintainerEmail: greenlockConfig.email,
+      email: leConfig.email,
       agreeTos: true
     });
     console.log(`✅ Certificate requested for ${domain}`);
@@ -100,8 +74,8 @@ const requestCertificate = async (domain) => {
 // Check if certificate exists and is valid
 const hasValidCertificate = async (domain) => {
   try {
-    const gl = initializeGreenlock();
-    const cert = await gl.get({ servername: domain });
+    const le = initializeLetsEncrypt();
+    const cert = await le.get({ servername: domain });
     return cert && cert.privkey && cert.cert;
   } catch (error) {
     return false;
@@ -123,8 +97,8 @@ const getSSLOptions = async (domain) => {
 };
 
 module.exports = {
-  greenlockConfig,
-  initializeGreenlock,
+  leConfig,
+  initializeLetsEncrypt,
   getCertificate,
   requestCertificate,
   hasValidCertificate,

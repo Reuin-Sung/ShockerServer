@@ -26,6 +26,11 @@ app.use(express.json());
 // Serve ACME challenge files for Let's Encrypt
 app.use('/.well-known/acme-challenge', express.static(path.join(__dirname, 'public', '.well-known', 'acme-challenge')));
 
+// Test endpoint for domain verification
+app.get('/.well-known/acme-challenge/test', (req, res) => {
+  res.send('Domain verification test - server is accessible');
+});
+
 // In-memory storage for shocker state
 let shockerState = {
   isOn: false,

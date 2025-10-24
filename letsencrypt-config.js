@@ -115,27 +115,39 @@ const requestCertificate = async (domain) => {
       key: certKey
     });
     
+    console.log(`🌐 Testing domain accessibility...`);
+    console.log(`📡 Domain: ${domain}`);
+    console.log(`🔗 Test URL: http://${domain}/.well-known/acme-challenge/test`);
+    
     // Use the auto method which handles everything
-    const cert = await client.auto({
-      csr,
-      email: acmeConfig.email,
-      termsOfServiceAgreed: true,
-      challengeCreateFn: async (authz, challenge, keyAuthorization) => {
-        // Serve challenge file
-        const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
-        fs.mkdirSync(path.dirname(challengePath), { recursive: true });
-        fs.writeFileSync(challengePath, keyAuthorization);
-        console.log(`📁 Challenge file created: ${challengePath}`);
-      },
-      challengeRemoveFn: async (authz, challenge) => {
-        // Remove challenge file
-        const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
-        if (fs.existsSync(challengePath)) {
-          fs.unlinkSync(challengePath);
-          console.log(`🗑️ Challenge file removed: ${challengePath}`);
+    const cert = await Promise.race([
+      client.auto({
+        csr,
+        email: acmeConfig.email,
+        termsOfServiceAgreed: true,
+        challengeCreateFn: async (authz, challenge, keyAuthorization) => {
+          // Serve challenge file
+          const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
+          fs.mkdirSync(path.dirname(challengePath), { recursive: true });
+          fs.writeFileSync(challengePath, keyAuthorization);
+          console.log(`📁 Challenge file created: ${challengePath}`);
+          console.log(`🔗 Challenge URL: http://${domain}/.well-known/acme-challenge/${challenge.token}`);
+          console.log(`📄 Challenge content: ${keyAuthorization}`);
+          console.log(`⏳ Waiting for Let's Encrypt to verify challenge...`);
+        },
+        challengeRemoveFn: async (authz, challenge) => {
+          // Remove challenge file
+          const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
+          if (fs.existsSync(challengePath)) {
+            fs.unlinkSync(challengePath);
+            console.log(`🗑️ Challenge file removed: ${challengePath}`);
+          }
         }
-      }
-    });
+      }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Certificate request timeout after 5 minutes')), 5 * 60 * 1000)
+      )
+    ]);
     
     // Save certificate
     const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);

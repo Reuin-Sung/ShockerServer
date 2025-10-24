@@ -11,7 +11,8 @@
     "generate-cert": "node generate-cert.js",
     "setup": "npm run generate-cert && npm start",
     "letsencrypt": "node server.js",
-    "production": "NODE_ENV=production node server.js"
+    "production": "NODE_ENV=production node server.js",
+    "production-root": "sudo NODE_ENV=production node server.js"
   },
   "keywords": ["shocker", "api", "nodejs", "express"],
   "dependencies": {

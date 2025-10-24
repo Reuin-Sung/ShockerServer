@@ -36,12 +36,12 @@ npm install
 npm start
 ```
 
-For Let's Encrypt SSL certificates:
+For Let's Encrypt SSL certificates (requires root for ports 80/443):
 ```bash
-npm run letsencrypt
+sudo npm run production-root
 ```
 
-For production with Let's Encrypt:
+For development (non-root):
 ```bash
 npm run production
 ```
@@ -231,8 +231,17 @@ For production deployment with Let's Encrypt:
 1. **Configure domain**: Set `DOMAIN` and `LE_EMAIL` environment variables
 2. **DNS setup**: Point your domain to your server's IP address
 3. **Firewall**: Ensure ports 80 and 443 are open
-4. **Start server**: Run `npm run production` for Let's Encrypt certificates
+4. **Start server**: Run `sudo npm run production-root` for Let's Encrypt certificates
 5. **Monitor**: Check certificate renewal logs
+
+### Azure VM Setup
+
+For Azure VMs, ensure:
+
+1. **Network Security Group**: Allow inbound traffic on ports 80 and 443
+2. **Domain DNS**: Point your domain to the Azure VM's public IP
+3. **Root privileges**: Use `sudo` to bind to ports 80/443
+4. **Firewall**: Ensure Azure firewall allows HTTP/HTTPS traffic
 
 ### Quick Production Setup
 

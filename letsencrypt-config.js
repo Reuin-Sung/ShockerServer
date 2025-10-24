@@ -1,5 +1,6 @@
 const greenlock = require('greenlock');
 const path = require('path');
+const packageJson = require('./package.json');
 
 // Let's Encrypt configuration
 const greenlockConfig = {
@@ -22,6 +23,9 @@ const greenlockConfig = {
   // Domains to secure
   domains: process.env.DOMAINS ? process.env.DOMAINS.split(',') : ['localhost'],
   
+  // Package agent for Let's Encrypt
+  packageAgent: `${packageJson.name}/${packageJson.version}`,
+  
   // Certificate renewal settings
   renewWithin: 14 * 24 * 60 * 60 * 1000, // 14 days
   renewBy: 10 * 24 * 60 * 60 * 1000,      // 10 days
@@ -38,6 +42,12 @@ const greenlockConfig = {
       module: 'acme-http-01-standalone',
       webroot: path.join(__dirname, 'public')
     }
+  },
+  
+  // Additional configuration
+  store: {
+    module: 'greenlock-store-fs',
+    basePath: path.join(__dirname, 'certs')
   }
 };
 

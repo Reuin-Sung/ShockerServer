@@ -1,3 +1,6 @@
+// Load environment variables first
+require('dotenv').config();
+
 const acme = require('acme-client');
 const fs = require('fs');
 const path = require('path');

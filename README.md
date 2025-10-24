@@ -26,7 +26,12 @@ cp env.example .env
 # Edit .env with your domain and email
 ```
 
-3. Start the server:
+3. Install the new dependencies:
+```bash
+npm install
+```
+
+4. Start the server:
 ```bash
 npm start
 ```

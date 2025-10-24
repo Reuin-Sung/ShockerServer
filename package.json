@@ -19,7 +19,8 @@
     "cors": "^2.8.5",
     "https": "^1.0.0",
     "fs": "^0.0.1-security",
-    "acme-client": "^4.2.0"
+    "acme-client": "^4.2.0",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

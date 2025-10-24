@@ -6,8 +6,8 @@ const path = require('path');
 const acmeConfig = {
   // Let's Encrypt server (staging for testing, production for live)
   directoryUrl: process.env.NODE_ENV === 'production' 
-    ? acme.directory.letsencrypt.production
-    : acme.directory.letsencrypt.staging,
+    ? 'https://acme-v02.api.letsencrypt.org/directory'
+    : 'https://acme-staging-v02.api.letsencrypt.org/directory',
   
   // Email for Let's Encrypt notifications
   email: process.env.LE_EMAIL || 'resung25@proton.me',
@@ -47,7 +47,8 @@ const getOrCreateAccountKey = async () => {
   }
   
   // Create new account key
-  const accountKey = await acme.crypto.createPrivateKey();
+  const accountKey = await acme.forge.createPrivateKey();
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
   fs.writeFileSync(keyPath, accountKey);
   return accountKey;
 };
@@ -61,7 +62,8 @@ const getOrCreateCertKey = async (domain) => {
   }
   
   // Create new certificate key
-  const certKey = await acme.crypto.createPrivateKey();
+  const certKey = await acme.forge.createPrivateKey();
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
   fs.writeFileSync(keyPath, certKey);
   return certKey;
 };
@@ -127,7 +129,7 @@ const requestCertificate = async (domain) => {
     await client.waitForValidStatus(challenge);
     
     // Create certificate
-    const [key, csr] = await acme.crypto.createCsr({
+    const [key, csr] = await acme.forge.createCsr({
       commonName: domain,
       key: certKey
     });

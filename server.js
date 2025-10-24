@@ -202,10 +202,7 @@ const setupSSL = async () => {
 
 // Start servers
 const startServers = async () => {
-  // Setup SSL certificates first
-  await setupSSL();
-  
-  // Start HTTP server
+  // Start HTTP server first (needed for Let's Encrypt challenges)
   const httpServer = http.createServer(app);
   httpServer.listen(HTTP_PORT, () => {
     console.log(`🌐 HTTP server running on port ${HTTP_PORT}`);
@@ -213,6 +210,12 @@ const startServers = async () => {
     console.log(`   Shocker status: http://${domain}:${HTTP_PORT}/shocker/status`);
   });
 
+  // Wait a moment for HTTP server to be ready
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // Setup SSL certificates after HTTP server is running
+  await setupSSL();
+  
   // Start HTTPS server
   const httpsServer = https.createServer(sslOptions, app);
   httpsServer.listen(HTTPS_PORT, () => {

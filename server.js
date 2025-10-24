@@ -1,8 +1,21 @@
 const express = require('express');
 const cors = require('cors');
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const greenlockExpress = require('greenlock-express');
+const { 
+  greenlockConfig, 
+  initializeGreenlock, 
+  hasValidCertificate, 
+  getSSLOptions,
+  requestCertificate 
+} = require('./letsencrypt-config');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const HTTP_PORT = process.env.HTTP_PORT || 80;
+const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 
 // Middleware
 app.use(cors());
@@ -136,9 +149,109 @@ app.use('*', (req, res) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Shocker server running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Shocker status: http://localhost:${PORT}/shocker/status`);
+// Initialize Let's Encrypt
+let sslOptions = null;
+const domain = process.env.DOMAIN || 'localhost';
+
+// Function to setup SSL certificates
+const setupSSL = async () => {
+  try {
+    console.log('🔒 Setting up Let\'s Encrypt SSL certificates...');
+    
+    // Initialize Greenlock
+    initializeGreenlock();
+    
+    // Check if we have a valid certificate
+    const hasCert = await hasValidCertificate(domain);
+    
+    if (!hasCert) {
+      console.log(`📜 Requesting new certificate for ${domain}...`);
+      await requestCertificate(domain);
+    }
+    
+    // Get SSL options
+    sslOptions = await getSSLOptions(domain);
+    console.log('✅ SSL certificates ready');
+    
+  } catch (error) {
+    console.error('❌ Failed to setup SSL certificates:', error.message);
+    console.log('🔄 Falling back to self-signed certificates...');
+    
+    // Fallback to self-signed certificates
+    try {
+      sslOptions = {
+        key: fs.readFileSync(path.join(__dirname, 'certs', 'private-key.pem')),
+        cert: fs.readFileSync(path.join(__dirname, 'certs', 'certificate.pem'))
+      };
+    } catch (fallbackError) {
+      console.error('❌ No SSL certificates available. Please run: npm run generate-cert');
+      process.exit(1);
+    }
+  }
+};
+
+// Start servers
+const startServers = async () => {
+  // Setup SSL certificates first
+  await setupSSL();
+  
+  // Start HTTP server
+  const httpServer = http.createServer(app);
+  httpServer.listen(HTTP_PORT, () => {
+    console.log(`🌐 HTTP server running on port ${HTTP_PORT}`);
+    console.log(`   Health check: http://${domain}:${HTTP_PORT}/health`);
+    console.log(`   Shocker status: http://${domain}:${HTTP_PORT}/shocker/status`);
+  });
+
+  // Start HTTPS server
+  const httpsServer = https.createServer(sslOptions, app);
+  httpsServer.listen(HTTPS_PORT, () => {
+    console.log(`🔒 HTTPS server running on port ${HTTPS_PORT}`);
+    console.log(`   Health check: https://${domain}:${HTTPS_PORT}/health`);
+    console.log(`   Shocker status: https://${domain}:${HTTPS_PORT}/shocker/status`);
+  });
+  
+  return { httpServer, httpsServer };
+};
+
+// Start the servers
+startServers().then(servers => {
+  httpServer = servers.httpServer;
+  httpsServer = servers.httpsServer;
+}).catch(error => {
+  console.error('❌ Failed to start servers:', error.message);
+  process.exit(1);
+});
+
+// Graceful shutdown
+let httpServer, httpsServer;
+
+process.on('SIGTERM', () => {
+  console.log('🛑 Shutting down servers...');
+  if (httpServer) {
+    httpServer.close(() => {
+      console.log('✅ HTTP server closed');
+    });
+  }
+  if (httpsServer) {
+    httpsServer.close(() => {
+      console.log('✅ HTTPS server closed');
+      process.exit(0);
+    });
+  }
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Shutting down servers...');
+  if (httpServer) {
+    httpServer.close(() => {
+      console.log('✅ HTTP server closed');
+    });
+  }
+  if (httpsServer) {
+    httpsServer.close(() => {
+      console.log('✅ HTTPS server closed');
+      process.exit(0);
+    });
+  }
 });

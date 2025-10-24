@@ -10,7 +10,8 @@ const greenlockConfig = {
     : 'https://acme-staging-v02.api.letsencrypt.org/directory',
   
   // Email for Let's Encrypt notifications
-  email: process.env.LE_EMAIL || 'admin@example.com',
+  email: process.env.LE_EMAIL || 'resung25@proton.me',
+  maintainerEmail: process.env.LE_EMAIL || 'resung25@proton.me',
   
   // Agree to Let's Encrypt terms of service
   agreeTos: true,
@@ -75,6 +76,7 @@ const requestCertificate = async (domain) => {
     const cert = await gl.register({
       domains: [domain],
       email: greenlockConfig.email,
+      maintainerEmail: greenlockConfig.email,
       agreeTos: true
     });
     console.log(`✅ Certificate requested for ${domain}`);

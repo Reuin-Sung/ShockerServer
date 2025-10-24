@@ -19,7 +19,7 @@
     "cors": "^2.8.5",
     "https": "^1.0.0",
     "fs": "^0.0.1-security",
-    "node-letsencrypt": "^2.0.0"
+    "acme-client": "^4.2.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

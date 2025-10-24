@@ -5,8 +5,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { 
-  leConfig, 
-  initializeLetsEncrypt, 
+  acmeConfig, 
+  initializeACME, 
   hasValidCertificate, 
   getSSLOptions,
   requestCertificate 
@@ -157,8 +157,8 @@ const setupSSL = async () => {
   try {
     console.log('🔒 Setting up Let\'s Encrypt SSL certificates...');
     
-    // Initialize Let's Encrypt
-    initializeLetsEncrypt();
+    // Initialize ACME client
+    await initializeACME();
     
     // Check if we have a valid certificate
     const hasCert = await hasValidCertificate(domain);

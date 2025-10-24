@@ -1,84 +1,169 @@
-const letsencrypt = require('node-letsencrypt');
-const path = require('path');
+const acme = require('acme-client');
 const fs = require('fs');
+const path = require('path');
 
 // Let's Encrypt configuration
-const leConfig = {
+const acmeConfig = {
   // Let's Encrypt server (staging for testing, production for live)
-  server: process.env.NODE_ENV === 'production' 
-    ? 'https://acme-v02.api.letsencrypt.org/directory'
-    : 'https://acme-staging-v02.api.letsencrypt.org/directory',
+  directoryUrl: process.env.NODE_ENV === 'production' 
+    ? acme.directory.letsencrypt.production
+    : acme.directory.letsencrypt.staging,
   
   // Email for Let's Encrypt notifications
   email: process.env.LE_EMAIL || 'resung25@proton.me',
-  
-  // Agree to Let's Encrypt terms of service
-  agreeTos: true,
   
   // Store certificates in ./certs directory
   certDir: path.join(__dirname, 'certs'),
   
   // Domains to secure
   domains: process.env.DOMAINS ? process.env.DOMAINS.split(',') : ['localhost'],
-  
-  // Certificate renewal settings
-  renewWithin: 14 * 24 * 60 * 60 * 1000, // 14 days
-  renewBy: 10 * 24 * 60 * 60 * 1000,      // 10 days
 };
 
-// Initialize Let's Encrypt
-let leInstance = null;
+// Initialize ACME client
+let acmeClient = null;
 
-const initializeLetsEncrypt = () => {
-  if (!leInstance) {
+const initializeACME = async () => {
+  if (!acmeClient) {
     try {
-      leInstance = letsencrypt.create(leConfig);
-      console.log('🔒 Let\'s Encrypt initialized');
+      acmeClient = new acme.Client({
+        directoryUrl: acmeConfig.directoryUrl,
+        accountKey: await getOrCreateAccountKey()
+      });
+      console.log('🔒 ACME client initialized');
     } catch (error) {
-      console.error('❌ Failed to initialize Let\'s Encrypt:', error.message);
+      console.error('❌ Failed to initialize ACME client:', error.message);
       throw error;
     }
   }
-  return leInstance;
+  return acmeClient;
 };
 
-// Get certificate for domain
-const getCertificate = async (domain) => {
+// Get or create account key
+const getOrCreateAccountKey = async () => {
+  const keyPath = path.join(acmeConfig.certDir, 'account-key.pem');
+  
+  if (fs.existsSync(keyPath)) {
+    return fs.readFileSync(keyPath);
+  }
+  
+  // Create new account key
+  const accountKey = await acme.crypto.createPrivateKey();
+  fs.writeFileSync(keyPath, accountKey);
+  return accountKey;
+};
+
+// Get or create certificate key
+const getOrCreateCertKey = async (domain) => {
+  const keyPath = path.join(acmeConfig.certDir, `${domain}-key.pem`);
+  
+  if (fs.existsSync(keyPath)) {
+    return fs.readFileSync(keyPath);
+  }
+  
+  // Create new certificate key
+  const certKey = await acme.crypto.createPrivateKey();
+  fs.writeFileSync(keyPath, certKey);
+  return certKey;
+};
+
+// Check if certificate exists and is valid
+const hasValidCertificate = async (domain) => {
   try {
-    const le = initializeLetsEncrypt();
-    const cert = await le.get({ servername: domain });
-    return cert;
+    const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);
+    const keyPath = path.join(acmeConfig.certDir, `${domain}-key.pem`);
+    
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      return false;
+    }
+    
+    // Check if certificate is expired (basic check)
+    const cert = fs.readFileSync(certPath, 'utf8');
+    const notAfterMatch = cert.match(/Not After : (.+)/);
+    
+    if (notAfterMatch) {
+      const expiryDate = new Date(notAfterMatch[1]);
+      const now = new Date();
+      return expiryDate > now;
+    }
+    
+    return true;
   } catch (error) {
-    console.error(`❌ Failed to get certificate for ${domain}:`, error.message);
-    throw error;
+    return false;
   }
 };
 
 // Request new certificate
 const requestCertificate = async (domain) => {
   try {
-    const le = initializeLetsEncrypt();
-    const cert = await le.register({
-      domains: [domain],
-      email: leConfig.email,
-      agreeTos: true
+    const client = await initializeACME();
+    const certKey = await getOrCreateCertKey(domain);
+    
+    // Create account if needed
+    await client.createAccount({
+      termsOfServiceAgreed: true,
+      contact: [`mailto:${acmeConfig.email}`]
     });
-    console.log(`✅ Certificate requested for ${domain}`);
-    return cert;
+    
+    // Create order
+    const order = await client.createOrder({
+      identifiers: [{ type: 'dns', value: domain }]
+    });
+    
+    // Get authorization
+    const authz = await client.getAuthorization(order.authorizations[0]);
+    
+    // Create HTTP-01 challenge
+    const challenge = authz.challenges.find(c => c.type === 'http-01');
+    const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
+    
+    // Serve challenge file
+    const challengePath = path.join(__dirname, 'public', '.well-known', 'acme-challenge', challenge.token);
+    fs.mkdirSync(path.dirname(challengePath), { recursive: true });
+    fs.writeFileSync(challengePath, keyAuthorization);
+    
+    // Verify challenge
+    await client.verifyChallenge(authz, challenge);
+    await client.completeChallenge(challenge);
+    await client.waitForValidStatus(challenge);
+    
+    // Create certificate
+    const [key, csr] = await acme.crypto.createCsr({
+      commonName: domain,
+      key: certKey
+    });
+    
+    const cert = await client.getCertificate(order);
+    
+    // Save certificate
+    const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);
+    fs.writeFileSync(certPath, cert);
+    
+    console.log(`✅ Certificate created for ${domain}`);
+    return { key: certKey, cert };
+    
   } catch (error) {
     console.error(`❌ Failed to request certificate for ${domain}:`, error.message);
     throw error;
   }
 };
 
-// Check if certificate exists and is valid
-const hasValidCertificate = async (domain) => {
+// Get certificate for domain
+const getCertificate = async (domain) => {
   try {
-    const le = initializeLetsEncrypt();
-    const cert = await le.get({ servername: domain });
-    return cert && cert.privkey && cert.cert;
+    const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);
+    const keyPath = path.join(acmeConfig.certDir, `${domain}-key.pem`);
+    
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      throw new Error(`Certificate not found for ${domain}`);
+    }
+    
+    return {
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath)
+    };
   } catch (error) {
-    return false;
+    console.error(`❌ Failed to get certificate for ${domain}:`, error.message);
+    throw error;
   }
 };
 
@@ -87,7 +172,7 @@ const getSSLOptions = async (domain) => {
   try {
     const cert = await getCertificate(domain);
     return {
-      key: cert.privkey,
+      key: cert.key,
       cert: cert.cert
     };
   } catch (error) {
@@ -97,8 +182,8 @@ const getSSLOptions = async (domain) => {
 };
 
 module.exports = {
-  leConfig,
-  initializeLetsEncrypt,
+  acmeConfig,
+  initializeACME,
   getCertificate,
   requestCertificate,
   hasValidCertificate,

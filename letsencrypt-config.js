@@ -149,16 +149,17 @@ const requestCertificate = async (domain) => {
       )
     ]);
     
-    // Save certificate and key
+    // Save certificate and key (use the key from CSR creation, not certKey)
     const certPath = path.join(acmeConfig.certDir, `${domain}-cert.pem`);
     const keyPath = path.join(acmeConfig.certDir, `${domain}-key.pem`);
     fs.writeFileSync(certPath, cert);
-    fs.writeFileSync(keyPath, certKey);
+    fs.writeFileSync(keyPath, key); // Use the key from CSR creation
     
     console.log(`✅ Certificate created for ${domain}`);
     console.log(`📁 Certificate saved: ${certPath}`);
     console.log(`🔑 Key saved: ${keyPath}`);
-    return { key: certKey, cert };
+    console.log(`🔑 Using key from CSR creation (${key.length} bytes)`);
+    return { key: key, cert };
     
   } catch (error) {
     console.error(`❌ Failed to request certificate for ${domain}:`, error.message);

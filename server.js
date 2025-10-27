@@ -7,6 +7,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const WebSocket = require('ws');
 const { 
   acmeConfig, 
   initializeACME, 
@@ -39,6 +40,21 @@ let shockerState = {
   lastActivated: null
 };
 
+// WebSocket server instances
+let wssHttp = null;
+let wssHttps = null;
+const connectedClients = new Set();
+
+// WebSocket message types
+const WS_MESSAGE_TYPES = {
+  STATE_UPDATE: 'state_update',
+  SHOCK_ACTIVATED: 'shock_activated',
+  SHOCK_STOPPED: 'shock_stopped',
+  ERROR: 'error',
+  PING: 'ping',
+  PONG: 'pong'
+};
+
 // Validation functions
 const validateIntensity = (intensity) => {
   const num = parseInt(intensity);
@@ -48,6 +64,74 @@ const validateIntensity = (intensity) => {
 const validateTime = (time) => {
   const num = parseInt(time);
   return !isNaN(num) && num >= 300 && num <= 30000;
+};
+
+// WebSocket utility functions
+const broadcastToClients = (message) => {
+  const messageStr = JSON.stringify(message);
+  connectedClients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(messageStr);
+    }
+  });
+};
+
+const createWebSocketServer = (server, port) => {
+  const wss = new WebSocket.Server({ 
+    server,
+    path: '/ws'
+  });
+
+  wss.on('connection', (ws, req) => {
+    console.log(`🔌 New WebSocket connection from ${req.socket.remoteAddress} on port ${port}`);
+    connectedClients.add(ws);
+
+    // Send current state to newly connected client
+    ws.send(JSON.stringify({
+      type: WS_MESSAGE_TYPES.STATE_UPDATE,
+      data: shockerState,
+      timestamp: new Date().toISOString()
+    }));
+
+    // Handle incoming messages
+    ws.on('message', (message) => {
+      try {
+        const data = JSON.parse(message);
+        
+        switch (data.type) {
+          case WS_MESSAGE_TYPES.PING:
+            ws.send(JSON.stringify({
+              type: WS_MESSAGE_TYPES.PONG,
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          default:
+            console.log('Unknown message type:', data.type);
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+        ws.send(JSON.stringify({
+          type: WS_MESSAGE_TYPES.ERROR,
+          message: 'Invalid message format',
+          timestamp: new Date().toISOString()
+        }));
+      }
+    });
+
+    // Handle client disconnect
+    ws.on('close', () => {
+      console.log(`🔌 WebSocket connection closed on port ${port}`);
+      connectedClients.delete(ws);
+    });
+
+    // Handle errors
+    ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
+      connectedClients.delete(ws);
+    });
+  });
+
+  return wss;
 };
 
 // Routes
@@ -107,10 +191,29 @@ app.post('/shocker/activate', (req, res) => {
   shockerState.currentTime = parseInt(time);
   shockerState.lastActivated = new Date().toISOString();
 
+  // Broadcast shock activation to all connected clients
+  broadcastToClients({
+    type: WS_MESSAGE_TYPES.SHOCK_ACTIVATED,
+    data: {
+      isOn: shockerState.isOn,
+      intensity: shockerState.currentIntensity,
+      time: shockerState.currentTime,
+      activatedAt: shockerState.lastActivated
+    },
+    timestamp: new Date().toISOString()
+  });
+
   // Simulate shock duration (in a real implementation, this would control actual hardware)
   setTimeout(() => {
     shockerState.isOn = false;
     console.log(`Shock completed: ${intensity}% intensity for ${time}ms`);
+    
+    // Broadcast shock completion to all connected clients
+    broadcastToClients({
+      type: WS_MESSAGE_TYPES.STATE_UPDATE,
+      data: shockerState,
+      timestamp: new Date().toISOString()
+    });
   }, parseInt(time));
 
   res.json({
@@ -130,6 +233,17 @@ app.post('/shocker/stop', (req, res) => {
   shockerState.isOn = false;
   shockerState.currentIntensity = 0;
   shockerState.currentTime = 0;
+
+  // Broadcast shock stop to all connected clients
+  broadcastToClients({
+    type: WS_MESSAGE_TYPES.SHOCK_STOPPED,
+    data: {
+      isOn: shockerState.isOn,
+      intensity: shockerState.currentIntensity,
+      time: shockerState.currentTime
+    },
+    timestamp: new Date().toISOString()
+  });
 
   res.json({
     success: true,
@@ -208,7 +322,11 @@ const startServers = async () => {
     console.log(`🌐 HTTP server running on port ${HTTP_PORT}`);
     console.log(`   Health check: http://${domain}:${HTTP_PORT}/health`);
     console.log(`   Shocker status: http://${domain}:${HTTP_PORT}/shocker/status`);
+    console.log(`   WebSocket: ws://${domain}:${HTTP_PORT}/ws`);
   });
+
+  // Create WebSocket server for HTTP
+  wssHttp = createWebSocketServer(httpServer, HTTP_PORT);
 
   // Wait a moment for HTTP server to be ready
   await new Promise(resolve => setTimeout(resolve, 1000));
@@ -222,7 +340,11 @@ const startServers = async () => {
     console.log(`🔒 HTTPS server running on port ${HTTPS_PORT}`);
     console.log(`   Health check: https://${domain}:${HTTPS_PORT}/health`);
     console.log(`   Shocker status: https://${domain}:${HTTPS_PORT}/shocker/status`);
+    console.log(`   WebSocket: wss://${domain}:${HTTPS_PORT}/ws`);
   });
+
+  // Create WebSocket server for HTTPS
+  wssHttps = createWebSocketServer(httpsServer, HTTPS_PORT);
   
   return { httpServer, httpsServer };
 };
@@ -241,6 +363,19 @@ let httpServer, httpsServer;
 
 process.on('SIGTERM', () => {
   console.log('🛑 Shutting down servers...');
+  
+  // Close WebSocket connections
+  if (wssHttp) {
+    wssHttp.close(() => {
+      console.log('✅ HTTP WebSocket server closed');
+    });
+  }
+  if (wssHttps) {
+    wssHttps.close(() => {
+      console.log('✅ HTTPS WebSocket server closed');
+    });
+  }
+  
   if (httpServer) {
     httpServer.close(() => {
       console.log('✅ HTTP server closed');
@@ -256,6 +391,19 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('🛑 Shutting down servers...');
+  
+  // Close WebSocket connections
+  if (wssHttp) {
+    wssHttp.close(() => {
+      console.log('✅ HTTP WebSocket server closed');
+    });
+  }
+  if (wssHttps) {
+    wssHttps.close(() => {
+      console.log('✅ HTTPS WebSocket server closed');
+    });
+  }
+  
   if (httpServer) {
     httpServer.close(() => {
       console.log('✅ HTTP server closed');

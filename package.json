@@ -21,7 +21,8 @@
     "https": "^1.0.0",
     "fs": "^0.0.1-security",
     "acme-client": "^4.2.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

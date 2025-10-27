@@ -50,6 +50,7 @@ const WS_MESSAGE_TYPES = {
   STATUS: 'status',
   SHOCK_ACTIVATED: 'shock_activated',
   SHOCK_STOPPED: 'shock_stopped',
+  BROADCAST: 'broadcast',
   ERROR: 'error',
   PING: 'ping',
   PONG: 'pong'
@@ -74,6 +75,43 @@ const broadcastToClients = (message) => {
       client.send(messageStr);
     }
   });
+};
+
+// Broadcast a message with intensity, duration, and type to all connected clients
+const broadcastMessage = (intensity, duration, type) => {
+  // Validate type
+  const validTypes = ['shock', 'vibrate'];
+  if (!validTypes.includes(type)) {
+    console.error('Invalid broadcast type:', type);
+    return false;
+  }
+
+  // Validate intensity (0-100)
+  if (!validateIntensity(intensity)) {
+    console.error('Invalid intensity for broadcast:', intensity);
+    return false;
+  }
+
+  // Validate duration (300-30000ms)
+  if (!validateTime(duration)) {
+    console.error('Invalid duration for broadcast:', duration);
+    return false;
+  }
+
+  const message = {
+    type: WS_MESSAGE_TYPES.BROADCAST,
+    data: {
+      intensity: parseInt(intensity),
+      duration: parseInt(duration),
+      type: type,
+      timestamp: new Date().toISOString()
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  console.log(`📡 Broadcasting ${type} message: ${intensity}% intensity for ${duration}ms to ${connectedClients.size} clients`);
+  broadcastToClients(message);
+  return true;
 };
 
 const createWebSocketServer = (server, port) => {
@@ -256,6 +294,63 @@ app.post('/shocker/stop', (req, res) => {
   });
 });
 
+// Broadcast message to all WebSocket clients
+app.post('/broadcast', (req, res) => {
+  const { intensity, duration, type } = req.body;
+
+  // Validate input
+  if (!intensity || !duration || !type) {
+    return res.status(400).json({
+      error: 'Missing required parameters',
+      message: 'intensity, duration, and type are required'
+    });
+  }
+
+  // Validate type
+  const validTypes = ['shock', 'vibrate'];
+  if (!validTypes.includes(type)) {
+    return res.status(400).json({
+      error: 'Invalid type',
+      message: 'Type must be either "shock" or "vibrate"'
+    });
+  }
+
+  if (!validateIntensity(intensity)) {
+    return res.status(400).json({
+      error: 'Invalid intensity',
+      message: 'Intensity must be a number between 0 and 100'
+    });
+  }
+
+  if (!validateTime(duration)) {
+    return res.status(400).json({
+      error: 'Invalid duration',
+      message: 'Duration must be a number between 300 and 30000 milliseconds'
+    });
+  }
+
+  // Broadcast the message
+  const success = broadcastMessage(intensity, duration, type);
+  
+  if (success) {
+    res.json({
+      success: true,
+      message: 'Broadcast sent to all connected clients',
+      broadcast: {
+        intensity: parseInt(intensity),
+        duration: parseInt(duration),
+        type: type,
+        clients: connectedClients.size
+      }
+    });
+  } else {
+    res.status(500).json({
+      error: 'Broadcast failed',
+      message: 'Failed to send broadcast message'
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -322,6 +417,7 @@ const startServers = async () => {
     console.log(`🌐 HTTP server running on port ${HTTP_PORT}`);
     console.log(`   Health check: http://${domain}:${HTTP_PORT}/health`);
     console.log(`   Shocker status: http://${domain}:${HTTP_PORT}/shocker/status`);
+    console.log(`   Broadcast: http://${domain}:${HTTP_PORT}/broadcast`);
     console.log(`   WebSocket: ws://${domain}:${HTTP_PORT}/ws`);
   });
 
@@ -340,6 +436,7 @@ const startServers = async () => {
     console.log(`🔒 HTTPS server running on port ${HTTPS_PORT}`);
     console.log(`   Health check: https://${domain}:${HTTPS_PORT}/health`);
     console.log(`   Shocker status: https://${domain}:${HTTPS_PORT}/shocker/status`);
+    console.log(`   Broadcast: https://${domain}:${HTTPS_PORT}/broadcast`);
     console.log(`   WebSocket: wss://${domain}:${HTTPS_PORT}/ws`);
   });
 

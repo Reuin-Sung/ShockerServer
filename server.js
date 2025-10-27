@@ -101,10 +101,9 @@ const createWebSocketServer = (server, port) => {
             case WS_MESSAGE_TYPES.STATUS:
               ws.send(JSON.stringify({
                 type: WS_MESSAGE_TYPES.STATUS,
-                data: shockerState,
+                data: JSON.stringify(shockerState),
                 timestamp: new Date().toISOString()
               }));
-              shockerState = data.data;
               break;
           default:
             console.log('Unknown message type:', data.type);

@@ -7,6 +7,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 const { 
   acmeConfig, 
@@ -65,6 +66,51 @@ const validateIntensity = (intensity) => {
 const validateTime = (time) => {
   const num = parseInt(time);
   return !isNaN(num) && num >= 300 && num <= 30000;
+};
+
+// API Key management
+const apiKeys = new Set();
+const loadApiKeys = () => {
+  try {
+    const keysPath = path.join(__dirname, 'api-keys.txt');
+    
+    if (fs.existsSync(keysPath)) {
+      const keysContent = fs.readFileSync(keysPath, 'utf8');
+      const keys = keysContent.split('\n')
+        .map(key => key.trim())
+        .filter(key => key.length > 0);
+      
+      keys.forEach(key => apiKeys.add(key));
+      console.log(`🔑 Loaded ${apiKeys.size} API keys`);
+    } else {
+      console.log('⚠️  No API keys file found. Creating default keys...');
+      generateDefaultKeys();
+    }
+  } catch (error) {
+    console.error('Error loading API keys:', error);
+    generateDefaultKeys();
+  }
+};
+
+const generateDefaultKeys = () => {
+  const defaultKeys = [
+    crypto.randomBytes(32).toString('hex'),
+    crypto.randomBytes(32).toString('hex'),
+    crypto.randomBytes(32).toString('hex'),
+    crypto.randomBytes(32).toString('hex'),
+    crypto.randomBytes(32).toString('hex')
+  ];
+  
+  defaultKeys.forEach(key => apiKeys.add(key));
+  
+  // Save to file
+  const keysPath = path.join(__dirname, 'api-keys.txt');
+  fs.writeFileSync(keysPath, defaultKeys.join('\n'));
+  console.log(`🔑 Generated and saved ${defaultKeys.length} default API keys to api-keys.txt`);
+};
+
+const validateApiKey = (key) => {
+  return apiKeys.has(key);
 };
 
 // WebSocket utility functions
@@ -296,7 +342,15 @@ app.post('/shocker/stop', (req, res) => {
 
 // Broadcast message to all WebSocket clients
 app.post('/broadcast', (req, res) => {
-  const { intensity, duration, type } = req.body;
+  const { intensity, duration, type, apiKey } = req.body;
+
+  // Validate API key
+  if (!apiKey || !validateApiKey(apiKey)) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Valid API key is required'
+    });
+  }
 
   // Validate input
   if (!intensity || !duration || !type) {
@@ -349,6 +403,30 @@ app.post('/broadcast', (req, res) => {
       message: 'Failed to send broadcast message'
     });
   }
+});
+
+// List API keys (admin endpoint)
+app.get('/admin/keys', (req, res) => {
+  const { apiKey } = req.query;
+  
+  // Validate API key
+  if (!apiKey || !validateApiKey(apiKey)) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Valid API key is required'
+    });
+  }
+  
+  const keysArray = Array.from(apiKeys);
+  res.json({
+    success: true,
+    count: keysArray.length,
+    keys: keysArray.map((key, index) => ({
+      id: index + 1,
+      key: key,
+      preview: key.substring(0, 8) + '...' + key.substring(key.length - 8)
+    }))
+  });
 });
 
 // Error handling middleware
@@ -411,6 +489,9 @@ const setupSSL = async () => {
 
 // Start servers
 const startServers = async () => {
+  // Load API keys
+  loadApiKeys();
+  
   // Start HTTP server first (needed for Let's Encrypt challenges)
   const httpServer = http.createServer(app);
   httpServer.listen(HTTP_PORT, () => {
@@ -418,6 +499,7 @@ const startServers = async () => {
     console.log(`   Health check: http://${domain}:${HTTP_PORT}/health`);
     console.log(`   Shocker status: http://${domain}:${HTTP_PORT}/shocker/status`);
     console.log(`   Broadcast: http://${domain}:${HTTP_PORT}/broadcast`);
+    console.log(`   Admin keys: http://${domain}:${HTTP_PORT}/admin/keys`);
     console.log(`   WebSocket: ws://${domain}:${HTTP_PORT}/ws`);
   });
 
@@ -437,6 +519,7 @@ const startServers = async () => {
     console.log(`   Health check: https://${domain}:${HTTPS_PORT}/health`);
     console.log(`   Shocker status: https://${domain}:${HTTPS_PORT}/shocker/status`);
     console.log(`   Broadcast: https://${domain}:${HTTPS_PORT}/broadcast`);
+    console.log(`   Admin keys: https://${domain}:${HTTPS_PORT}/admin/keys`);
     console.log(`   WebSocket: wss://${domain}:${HTTPS_PORT}/ws`);
   });
 

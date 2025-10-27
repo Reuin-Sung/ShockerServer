@@ -47,7 +47,7 @@ const connectedClients = new Set();
 
 // WebSocket message types
 const WS_MESSAGE_TYPES = {
-  STATE_UPDATE: 'state_update',
+  STATUS: 'status',
   SHOCK_ACTIVATED: 'shock_activated',
   SHOCK_STOPPED: 'shock_stopped',
   ERROR: 'error',
@@ -86,13 +86,6 @@ const createWebSocketServer = (server, port) => {
     console.log(`🔌 New WebSocket connection from ${req.socket.remoteAddress} on port ${port}`);
     connectedClients.add(ws);
 
-    // Send current state to newly connected client
-    ws.send(JSON.stringify({
-      type: WS_MESSAGE_TYPES.STATE_UPDATE,
-      data: shockerState,
-      timestamp: new Date().toISOString()
-    }));
-
     // Handle incoming messages
     ws.on('message', (message) => {
       try {
@@ -105,6 +98,14 @@ const createWebSocketServer = (server, port) => {
               timestamp: new Date().toISOString()
             }));
             break;
+            case WS_MESSAGE_TYPES.STATUS:
+              ws.send(JSON.stringify({
+                type: WS_MESSAGE_TYPES.STATUS,
+                data: shockerState,
+                timestamp: new Date().toISOString()
+              }));
+              shockerState = data.data;
+              break;
           default:
             console.log('Unknown message type:', data.type);
         }
@@ -210,7 +211,7 @@ app.post('/shocker/activate', (req, res) => {
     
     // Broadcast shock completion to all connected clients
     broadcastToClients({
-      type: WS_MESSAGE_TYPES.STATE_UPDATE,
+      type: WS_MESSAGE_TYPES.STATUS,
       data: shockerState,
       timestamp: new Date().toISOString()
     });

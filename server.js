@@ -309,7 +309,8 @@ const broadcastMessage = async (intensity, duration, type) => {
         if (openshockResult.success) {
           console.log(`✅ OpenShock API: Control sent to ${openshockResult.shockers.length} shocker(s) from subscribers`);
         } else {
-          console.error(`❌ OpenShock API: Control failed - ${openshockResult.error?.message || 'Unknown error'}`);
+          const errorMsg = (openshockResult.error && openshockResult.error.message) ? openshockResult.error.message : 'Unknown error';
+          console.error(`❌ OpenShock API: Control failed - ${errorMsg}`);
         }
       }
     } catch (error) {

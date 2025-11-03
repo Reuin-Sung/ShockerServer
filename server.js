@@ -123,8 +123,101 @@ const broadcastToClients = (message) => {
   });
 };
 
+// Send control command to OpenShock API
+const sendOpenShockControl = (shockers, intensity, duration, type) => {
+  return new Promise((resolve, reject) => {
+    const apiToken = process.env.OPENSHOCK_API_TOKEN;
+    const openshockShockers = process.env.OPENSHOCK_SHOCKER_IDS;
+    
+    // Check if OpenShock integration is enabled
+    if (!apiToken || !openshockShockers) {
+      resolve({ enabled: false, message: 'OpenShock API not configured' });
+      return;
+    }
+    
+    // Parse shocker IDs (comma-separated list from env)
+    let shockerList;
+    try {
+      shockerList = openshockShockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
+    } catch (error) {
+      reject(new Error(`Failed to parse OpenShock shocker IDs: ${error.message}`));
+      return;
+    }
+    
+    // If specific shockers are provided, use them; otherwise use env list
+    const shockerIds = shockers && shockers.length > 0 ? shockers : shockerList;
+    
+    if (shockerIds.length === 0) {
+      resolve({ enabled: false, message: 'No shockers specified' });
+      return;
+    }
+    
+    // OpenShock API expects duration in milliseconds (based on API docs)
+    // Convert type to match OpenShock API format
+    const openshockType = type === 'vibrate' ? 'vibrate' : 'shock';
+    
+    const payload = JSON.stringify({
+      shockers: shockerIds,
+      intensity: parseInt(intensity),
+      duration: parseInt(duration),
+      type: openshockType
+    });
+    
+    const options = {
+      hostname: 'api.openshock.app',
+      path: '/2/shockers/control',
+      method: 'POST',
+      headers: {
+        'Open-Shock-Token': apiToken,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    };
+    
+    const req = https.request(options, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            const response = data ? JSON.parse(data) : {};
+            resolve({
+              enabled: true,
+              success: true,
+              statusCode: res.statusCode,
+              data: response,
+              shockers: shockerIds
+            });
+          } else {
+            const errorResponse = data ? JSON.parse(data) : { message: 'Unknown error' };
+            resolve({
+              enabled: true,
+              success: false,
+              statusCode: res.statusCode,
+              error: errorResponse
+            });
+          }
+        } catch (error) {
+          reject(new Error(`Failed to parse OpenShock API response: ${error.message}`));
+        }
+      });
+    });
+    
+    req.on('error', (error) => {
+      reject(new Error(`OpenShock API request failed: ${error.message}`));
+    });
+    
+    req.write(payload);
+    req.end();
+  });
+};
+
 // Broadcast a message with intensity, duration, and type to all connected clients
-const broadcastMessage = (intensity, duration, type) => {
+const broadcastMessage = async (intensity, duration, type, shockers = null) => {
   // Validate type
   const validTypes = ['shock', 'vibrate'];
   if (!validTypes.includes(type)) {
@@ -156,13 +249,30 @@ const broadcastMessage = (intensity, duration, type) => {
   };
 
   console.log(`📡 Broadcasting ${type} message: ${intensity}% intensity for ${duration}ms to ${connectedClients.size} clients`);
+  
+  // Broadcast to WebSocket clients
   broadcastToClients(message);
+  
+  // Send to OpenShock API if configured
+  try {
+    const openshockResult = await sendOpenShockControl(shockers, intensity, duration, type);
+    if (openshockResult.enabled) {
+      if (openshockResult.success) {
+        console.log(`✅ OpenShock API: Control sent to ${openshockResult.shockers.length} shocker(s)`);
+      } else {
+        console.error(`❌ OpenShock API: Control failed - ${openshockResult.error?.message || 'Unknown error'}`);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ OpenShock API error: ${error.message}`);
+  }
+  
   return true;
 };
 
 // Execute broadcast function (extracted from POST endpoint for reuse)
 // This function performs validation and executes the broadcast
-const executeBroadcast = (intensity, duration, type) => {
+const executeBroadcast = async (intensity, duration, type, shockers = null) => {
   // Validate input
   if (!intensity || !duration || !type) {
     return {
@@ -198,8 +308,8 @@ const executeBroadcast = (intensity, duration, type) => {
     };
   }
 
-  // Execute the broadcast
-  const success = broadcastMessage(intensity, duration, type);
+  // Execute the broadcast (now async)
+  const success = await broadcastMessage(intensity, duration, type, shockers);
   
   if (success) {
     return {
@@ -402,8 +512,8 @@ app.post('/shocker/stop', (req, res) => {
 });
 
 // Broadcast message to all WebSocket clients
-app.post('/broadcast', (req, res) => {
-  const { intensity, duration, type, apiKey } = req.body;
+app.post('/broadcast', async (req, res) => {
+  const { intensity, duration, type, apiKey, shockers } = req.body;
 
   // Validate API key
   if (!apiKey || !validateApiKey(apiKey)) {
@@ -413,8 +523,18 @@ app.post('/broadcast', (req, res) => {
     });
   }
 
-  // Use the extracted executeBroadcast function
-  const result = executeBroadcast(intensity, duration, type);
+  // Parse shockers if provided (can be array or comma-separated string)
+  let shockerList = null;
+  if (shockers) {
+    if (Array.isArray(shockers)) {
+      shockerList = shockers;
+    } else if (typeof shockers === 'string') {
+      shockerList = shockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
+    }
+  }
+
+  // Use the extracted executeBroadcast function (now async)
+  const result = await executeBroadcast(intensity, duration, type, shockerList);
   
   if (result.success) {
     res.json(result);
@@ -573,12 +693,17 @@ const startYouTubeSubscriberMonitoring = () => {
       // Execute broadcast if enabled
       if (broadcastOnSubscriberChange) {
         console.log(`🎉 Subscriber count changed! Triggering broadcast...`);
-        const result = executeBroadcast(broadcastIntensity, broadcastDuration, broadcastType);
-        if (result.success) {
-          console.log(`✅ Broadcast sent: ${broadcastType} ${broadcastIntensity}% for ${broadcastDuration}ms`);
-        } else {
-          console.error(`❌ Broadcast failed: ${result.message}`);
-        }
+        executeBroadcast(broadcastIntensity, broadcastDuration, broadcastType)
+          .then((result) => {
+            if (result.success) {
+              console.log(`✅ Broadcast sent: ${broadcastType} ${broadcastIntensity}% for ${broadcastDuration}ms`);
+            } else {
+              console.error(`❌ Broadcast failed: ${result.message}`);
+            }
+          })
+          .catch((error) => {
+            console.error(`❌ Broadcast error: ${error.message}`);
+          });
       }
     } else {
       console.log(`📊 YouTube Subscribers: ${countString} | Channel: ${data.channelName}`);

@@ -221,26 +221,89 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
       
       res.on('end', () => {
         try {
+          const contentType = res.headers['content-type'] || '';
+          const isJson = contentType.includes('application/json');
+          
+          // Check if response is empty
+          if (!data || data.trim().length === 0) {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve({
+                enabled: true,
+                success: true,
+                statusCode: res.statusCode,
+                data: {},
+                shockers: shockerIds
+              });
+            } else {
+              resolve({
+                enabled: true,
+                success: false,
+                statusCode: res.statusCode,
+                error: { message: 'Empty response from OpenShock API' }
+              });
+            }
+            return;
+          }
+          
+          // Try to parse as JSON
+          let parsedData;
+          if (isJson) {
+            parsedData = JSON.parse(data);
+          } else {
+            // If not JSON, check if it looks like JSON anyway
+            const trimmedData = data.trim();
+            if (trimmedData.startsWith('{') || trimmedData.startsWith('[')) {
+              try {
+                parsedData = JSON.parse(data);
+              } catch (e) {
+                // Not valid JSON, treat as HTML/text error
+                const preview = data.length > 200 ? data.substring(0, 200) + '...' : data;
+                resolve({
+                  enabled: true,
+                  success: false,
+                  statusCode: res.statusCode,
+                  error: { 
+                    message: `Non-JSON response from OpenShock API (Status: ${res.statusCode})`,
+                    response: preview
+                  }
+                });
+                return;
+              }
+            } else {
+              // HTML or other non-JSON response
+              const preview = data.length > 200 ? data.substring(0, 200) + '...' : data;
+              resolve({
+                enabled: true,
+                success: false,
+                statusCode: res.statusCode,
+                error: { 
+                  message: `Non-JSON response from OpenShock API (Status: ${res.statusCode}, Content-Type: ${contentType})`,
+                  response: preview
+                }
+              });
+              return;
+            }
+          }
+          
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            const response = data ? JSON.parse(data) : {};
             resolve({
               enabled: true,
               success: true,
               statusCode: res.statusCode,
-              data: response,
+              data: parsedData,
               shockers: shockerIds
             });
           } else {
-            const errorResponse = data ? JSON.parse(data) : { message: 'Unknown error' };
             resolve({
               enabled: true,
               success: false,
               statusCode: res.statusCode,
-              error: errorResponse
+              error: parsedData || { message: 'Unknown error' }
             });
           }
         } catch (error) {
-          reject(new Error(`Failed to parse OpenShock API response: ${error.message}`));
+          const preview = data ? (data.length > 200 ? data.substring(0, 200) + '...' : data) : 'No data';
+          reject(new Error(`Failed to parse OpenShock API response: ${error.message}. Response preview: ${preview}`));
         }
       });
     });

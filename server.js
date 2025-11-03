@@ -204,7 +204,8 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
     }));
     
     const payload = JSON.stringify({
-      shocks: shocksArray
+      shocks: shocksArray,
+      customName: 'From shocekr.resng.gay <3'
     });
     
     const options = {
@@ -213,8 +214,7 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
       method: 'POST',
       headers: {
         'OpenShockToken': apiToken,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload)
+        'Content-Type': 'application/json'
       }
     };
     

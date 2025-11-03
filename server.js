@@ -272,13 +272,15 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
             } else {
               // HTML or other non-JSON response
               const preview = data.length > 200 ? data.substring(0, 200) + '...' : data;
+              const fullResponse = data.length > 1000 ? data.substring(0, 1000) + '...' : data;
               resolve({
                 enabled: true,
                 success: false,
                 statusCode: res.statusCode,
                 error: { 
                   message: `Non-JSON response from OpenShock API (Status: ${res.statusCode}, Content-Type: ${contentType})`,
-                  response: preview
+                  response: preview,
+                  fullResponse: fullResponse
                 }
               });
               return;
@@ -373,7 +375,13 @@ const broadcastMessage = async (intensity, duration, type) => {
                 console.log(`✅ OpenShock API: Control sent to ${result.shockers.length} shocker(s) with token ${token.substring(0, 8)}...`);
               } else {
                 const errorMsg = (result.error && result.error.message) ? result.error.message : 'Unknown error';
-                console.error(`❌ OpenShock API: Control failed for token ${token.substring(0, 8)}... - ${errorMsg}`);
+                const statusCode = result.statusCode || 'unknown';
+                const errorDetails = result.error && result.error.response ? ` Response: ${result.error.response.substring(0, 100)}` : '';
+                console.error(`❌ OpenShock API: Control failed for token ${token.substring(0, 8)}... (Status: ${statusCode}) - ${errorMsg}${errorDetails}`);
+                // Log full error details for debugging
+                if (result.error && result.error.response) {
+                  console.error(`   Full error response: ${result.error.response.substring(0, 500)}`);
+                }
               }
             }
             return result;

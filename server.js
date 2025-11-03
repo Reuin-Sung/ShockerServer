@@ -960,6 +960,10 @@ const startYouTubeSubscriberMonitoring = () => {
     // Check if subscriber count changed
     if (previousSubscriberCount !== null && previousSubscriberCount !== currentCount) {
       const change = currentCount - previousSubscriberCount;
+      if(change < 0) {
+        previousSubscriberCount = currentCount;
+        return;
+      }
       const changeSign = change > 0 ? '+' : '';
       console.log(`📊 YouTube Subscribers: ${countString} | Channel: ${data.channelName} | Change: ${changeSign}${change.toLocaleString()}`);
       

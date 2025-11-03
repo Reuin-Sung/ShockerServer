@@ -934,14 +934,14 @@ const startYouTubeSubscriberMonitoring = () => {
       console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
     });
   
-  // Then fetch every 60 seconds
+  // Then fetch every 20 seconds
   setInterval(() => {
     getYouTubeSubscriberCount()
       .then(handleSubscriberUpdate)
       .catch((error) => {
         console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
       });
-  }, 60000); // 60 seconds = 60000 milliseconds
+  }, 20000); // 20 seconds = 20000 milliseconds
 };
 
 // Initialize Let's Encrypt

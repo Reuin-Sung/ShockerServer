@@ -45,6 +45,8 @@ let shockerState = {
 let wssHttp = null;
 let wssHttps = null;
 const connectedClients = new Set();
+// Map of WebSocket -> {apiKey, shockers: []}
+const broadcastSubscribers = new Map();
 
 // WebSocket message types
 const WS_MESSAGE_TYPES = {
@@ -54,7 +56,11 @@ const WS_MESSAGE_TYPES = {
   BROADCAST: 'broadcast',
   ERROR: 'error',
   PING: 'ping',
-  PONG: 'pong'
+  PONG: 'pong',
+  SUBSCRIBE_BROADCAST: 'subscribe_broadcast',
+  UNSUBSCRIBE_BROADCAST: 'unsubscribe_broadcast',
+  SUBSCRIBED: 'subscribed',
+  UNSUBSCRIBED: 'unsubscribed'
 };
 
 // Validation functions
@@ -121,6 +127,41 @@ const broadcastToClients = (message) => {
       client.send(messageStr);
     }
   });
+};
+
+// Broadcast to subscribers only
+const broadcastToSubscribers = (message) => {
+  const messageStr = JSON.stringify(message);
+  let sentCount = 0;
+  broadcastSubscribers.forEach((subscriberData, ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(messageStr);
+        sentCount++;
+      } catch (error) {
+        console.error('Error sending to broadcast subscriber:', error);
+        // Remove dead connection
+        broadcastSubscribers.delete(ws);
+      }
+    } else {
+      // Remove closed connections
+      broadcastSubscribers.delete(ws);
+    }
+  });
+  return sentCount;
+};
+
+// Collect all shockers from all subscribers
+const collectSubscriberShockers = () => {
+  const allShockers = new Set();
+  broadcastSubscribers.forEach((subscriberData, ws) => {
+    if (ws.readyState === WebSocket.OPEN && subscriberData.shockers) {
+      subscriberData.shockers.forEach(shockerId => {
+        allShockers.add(shockerId);
+      });
+    }
+  });
+  return Array.from(allShockers);
 };
 
 // Send control command to OpenShock API
@@ -217,7 +258,7 @@ const sendOpenShockControl = (shockers, intensity, duration, type) => {
 };
 
 // Broadcast a message with intensity, duration, and type to all connected clients
-const broadcastMessage = async (intensity, duration, type, shockers = null) => {
+const broadcastMessage = async (intensity, duration, type) => {
   // Validate type
   const validTypes = ['shock', 'vibrate'];
   if (!validTypes.includes(type)) {
@@ -248,23 +289,32 @@ const broadcastMessage = async (intensity, duration, type, shockers = null) => {
     timestamp: new Date().toISOString()
   };
 
-  console.log(`📡 Broadcasting ${type} message: ${intensity}% intensity for ${duration}ms to ${connectedClients.size} clients`);
+  const subscriberCount = broadcastSubscribers.size;
+  console.log(`📡 Broadcasting ${type} message: ${intensity}% intensity for ${duration}ms to ${subscriberCount} broadcast subscriber(s)`);
   
-  // Broadcast to WebSocket clients
-  broadcastToClients(message);
+  // Broadcast to broadcast subscribers only
+  const sentCount = broadcastToSubscribers(message);
+  if (sentCount > 0) {
+    console.log(`   ✅ Sent to ${sentCount} subscriber(s)`);
+  }
   
-  // Send to OpenShock API if configured
-  try {
-    const openshockResult = await sendOpenShockControl(shockers, intensity, duration, type);
-    if (openshockResult.enabled) {
-      if (openshockResult.success) {
-        console.log(`✅ OpenShock API: Control sent to ${openshockResult.shockers.length} shocker(s)`);
-      } else {
-        console.error(`❌ OpenShock API: Control failed - ${openshockResult.error?.message || 'Unknown error'}`);
+  // Collect all shockers from subscribed clients
+  const allShockers = collectSubscriberShockers();
+  
+  // Send to OpenShock API if there are any shockers from subscribers
+  if (allShockers.length > 0) {
+    try {
+      const openshockResult = await sendOpenShockControl(allShockers, intensity, duration, type);
+      if (openshockResult.enabled) {
+        if (openshockResult.success) {
+          console.log(`✅ OpenShock API: Control sent to ${openshockResult.shockers.length} shocker(s) from subscribers`);
+        } else {
+          console.error(`❌ OpenShock API: Control failed - ${openshockResult.error?.message || 'Unknown error'}`);
+        }
       }
+    } catch (error) {
+      console.error(`❌ OpenShock API error: ${error.message}`);
     }
-  } catch (error) {
-    console.error(`❌ OpenShock API error: ${error.message}`);
   }
   
   return true;
@@ -272,7 +322,8 @@ const broadcastMessage = async (intensity, duration, type, shockers = null) => {
 
 // Execute broadcast function (extracted from POST endpoint for reuse)
 // This function performs validation and executes the broadcast
-const executeBroadcast = async (intensity, duration, type, shockers = null) => {
+// Note: shockers are collected from subscribed clients, not passed as parameter
+const executeBroadcast = async (intensity, duration, type) => {
   // Validate input
   if (!intensity || !duration || !type) {
     return {
@@ -309,17 +360,18 @@ const executeBroadcast = async (intensity, duration, type, shockers = null) => {
   }
 
   // Execute the broadcast (now async)
-  const success = await broadcastMessage(intensity, duration, type, shockers);
+  // Note: shockers are collected from subscribed clients, not passed here
+  const success = await broadcastMessage(intensity, duration, type);
   
   if (success) {
-    return {
+      return {
       success: true,
-      message: 'Broadcast sent to all connected clients',
+      message: 'Broadcast sent to all broadcast subscribers',
       broadcast: {
         intensity: parseInt(intensity),
         duration: parseInt(duration),
         type: type,
-        clients: connectedClients.size
+        subscribers: broadcastSubscribers.size
       }
     };
   } else {
@@ -338,7 +390,8 @@ const createWebSocketServer = (server, port) => {
   });
 
   wss.on('connection', (ws, req) => {
-    console.log(`🔌 New WebSocket connection from ${req.socket.remoteAddress} on port ${port}`);
+    const clientAddress = req.socket.remoteAddress;
+    console.log(`🔌 New WebSocket connection from ${clientAddress} on port ${port}`);
     connectedClients.add(ws);
 
     // Handle incoming messages
@@ -353,13 +406,73 @@ const createWebSocketServer = (server, port) => {
               timestamp: new Date().toISOString()
             }));
             break;
-            case WS_MESSAGE_TYPES.STATUS:
+          case WS_MESSAGE_TYPES.STATUS:
+            ws.send(JSON.stringify({
+              type: WS_MESSAGE_TYPES.STATUS,
+              data: shockerState,
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          case WS_MESSAGE_TYPES.SUBSCRIBE_BROADCAST:
+            // Validate API key
+            if (!data.apiKey || !validateApiKey(data.apiKey)) {
               ws.send(JSON.stringify({
-                type: WS_MESSAGE_TYPES.STATUS,
-                data: shockerState,
+                type: WS_MESSAGE_TYPES.ERROR,
+                message: 'Invalid API key. Valid API key is required to subscribe.',
                 timestamp: new Date().toISOString()
               }));
               break;
+            }
+            
+            // Parse shockers (can be array or comma-separated string)
+            let shockerList = [];
+            if (data.shockers) {
+              if (Array.isArray(data.shockers)) {
+                shockerList = data.shockers.map(id => String(id).trim()).filter(id => id.length > 0);
+              } else if (typeof data.shockers === 'string') {
+                shockerList = data.shockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
+              }
+            }
+            
+            // If no shockers provided, use default from environment
+            if (shockerList.length === 0) {
+              const defaultShockers = process.env.OPENSHOCK_SHOCKER_IDS;
+              if (defaultShockers) {
+                shockerList = defaultShockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
+              }
+            }
+            
+            // Store subscription with API key and shockers
+            broadcastSubscribers.set(ws, {
+              apiKey: data.apiKey,
+              shockers: shockerList
+            });
+            
+            console.log(`📡 Client ${clientAddress} subscribed to broadcasts with ${shockerList.length} shocker(s) (${broadcastSubscribers.size} total)`);
+            ws.send(JSON.stringify({
+              type: WS_MESSAGE_TYPES.SUBSCRIBED,
+              message: 'Successfully subscribed to broadcasts',
+              shockers: shockerList,
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          case WS_MESSAGE_TYPES.UNSUBSCRIBE_BROADCAST:
+            if (broadcastSubscribers.has(ws)) {
+              broadcastSubscribers.delete(ws);
+              console.log(`📡 Client ${clientAddress} unsubscribed from broadcasts (${broadcastSubscribers.size} remaining)`);
+              ws.send(JSON.stringify({
+                type: WS_MESSAGE_TYPES.UNSUBSCRIBED,
+                message: 'Successfully unsubscribed from broadcasts',
+                timestamp: new Date().toISOString()
+              }));
+            } else {
+              ws.send(JSON.stringify({
+                type: WS_MESSAGE_TYPES.UNSUBSCRIBED,
+                message: 'Not subscribed to broadcasts',
+                timestamp: new Date().toISOString()
+              }));
+            }
+            break;
           default:
             console.log('Unknown message type:', data.type);
         }
@@ -375,19 +488,31 @@ const createWebSocketServer = (server, port) => {
 
     // Handle client disconnect
     ws.on('close', () => {
-      console.log(`🔌 WebSocket connection closed on port ${port}`);
+      console.log(`🔌 WebSocket connection closed from ${clientAddress} on port ${port}`);
       connectedClients.delete(ws);
+      // Remove from broadcast subscribers if subscribed
+      if (broadcastSubscribers.has(ws)) {
+        const subscriberData = broadcastSubscribers.get(ws);
+        broadcastSubscribers.delete(ws);
+        console.log(`   📡 Removed from broadcast subscribers (${broadcastSubscribers.size} remaining)`);
+      }
     });
 
     // Handle errors
     ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
+      console.error(`WebSocket error from ${clientAddress}:`, error);
       connectedClients.delete(ws);
+      // Remove from broadcast subscribers if subscribed
+      if (broadcastSubscribers.has(ws)) {
+        broadcastSubscribers.delete(ws);
+        console.log(`   📡 Removed from broadcast subscribers (${broadcastSubscribers.size} remaining)`);
+      }
     });
   });
 
   return wss;
 };
+
 
 // Routes
 
@@ -513,7 +638,7 @@ app.post('/shocker/stop', (req, res) => {
 
 // Broadcast message to all WebSocket clients
 app.post('/broadcast', async (req, res) => {
-  const { intensity, duration, type, apiKey, shockers } = req.body;
+  const { intensity, duration, type, apiKey } = req.body;
 
   // Validate API key
   if (!apiKey || !validateApiKey(apiKey)) {
@@ -523,18 +648,9 @@ app.post('/broadcast', async (req, res) => {
     });
   }
 
-  // Parse shockers if provided (can be array or comma-separated string)
-  let shockerList = null;
-  if (shockers) {
-    if (Array.isArray(shockers)) {
-      shockerList = shockers;
-    } else if (typeof shockers === 'string') {
-      shockerList = shockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
-    }
-  }
-
   // Use the extracted executeBroadcast function (now async)
-  const result = await executeBroadcast(intensity, duration, type, shockerList);
+  // Note: shockers are automatically collected from subscribed clients via subscribe_broadcast
+  const result = await executeBroadcast(intensity, duration, type);
   
   if (result.success) {
     res.json(result);

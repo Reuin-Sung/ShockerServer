@@ -6,7 +6,7 @@
   "author": "ShockerServer",
   "license": "MIT",
   "scripts": {
-    "start": "node server.js",
+    "start": "sudo NODE_ENV=production node server.js",
     "dev": "nodemon server.js",
     "generate-cert": "node generate-cert.js",
     "generate-keys": "node generate-api-keys.js",

@@ -547,6 +547,10 @@ const createWebSocketServer = (server, port) => {
             });
             
             console.log(`📡 Client ${clientAddress} subscribed to broadcasts with ${shockerList.length} shocker(s) and OpenShock token (${broadcastSubscribers.size} total)`);
+            
+            // Check if we should start YouTube monitoring (first subscriber)
+            checkAndStartYouTubeMonitoring();
+            
             ws.send(JSON.stringify({
               type: WS_MESSAGE_TYPES.SUBSCRIBED,
               message: 'Successfully subscribed to broadcasts',
@@ -558,6 +562,14 @@ const createWebSocketServer = (server, port) => {
             if (broadcastSubscribers.has(ws)) {
               broadcastSubscribers.delete(ws);
               console.log(`📡 Client ${clientAddress} unsubscribed from broadcasts (${broadcastSubscribers.size} remaining)`);
+              
+              // Stop YouTube monitoring if no subscribers remain
+              if (!hasBroadcastSubscribers() && youtubeMonitoringInterval) {
+                console.log('📺 Stopping YouTube monitoring: No broadcast subscribers remaining');
+                clearInterval(youtubeMonitoringInterval);
+                youtubeMonitoringInterval = null;
+              }
+              
               ws.send(JSON.stringify({
                 type: WS_MESSAGE_TYPES.UNSUBSCRIBED,
                 message: 'Successfully unsubscribed from broadcasts',
@@ -593,6 +605,13 @@ const createWebSocketServer = (server, port) => {
         const subscriberData = broadcastSubscribers.get(ws);
         broadcastSubscribers.delete(ws);
         console.log(`   📡 Removed from broadcast subscribers (${broadcastSubscribers.size} remaining)`);
+        
+        // Stop YouTube monitoring if no subscribers remain
+        if (!hasBroadcastSubscribers() && youtubeMonitoringInterval) {
+          console.log('📺 Stopping YouTube monitoring: No broadcast subscribers remaining');
+          clearInterval(youtubeMonitoringInterval);
+          youtubeMonitoringInterval = null;
+        }
       }
     });
 
@@ -604,6 +623,13 @@ const createWebSocketServer = (server, port) => {
       if (broadcastSubscribers.has(ws)) {
         broadcastSubscribers.delete(ws);
         console.log(`   📡 Removed from broadcast subscribers (${broadcastSubscribers.size} remaining)`);
+        
+        // Stop YouTube monitoring if no subscribers remain
+        if (!hasBroadcastSubscribers() && youtubeMonitoringInterval) {
+          console.log('📺 Stopping YouTube monitoring: No broadcast subscribers remaining');
+          clearInterval(youtubeMonitoringInterval);
+          youtubeMonitoringInterval = null;
+        }
       }
     });
   });
@@ -868,8 +894,20 @@ const formatSubscriberCount = (count) => {
 
 // Track previous subscriber count for change detection
 let previousSubscriberCount = null;
+let youtubeMonitoringInterval = null;
 
-// Start periodic YouTube subscriber count checking
+// Check if there are active broadcast subscribers
+const hasBroadcastSubscribers = () => {
+  let hasActive = false;
+  broadcastSubscribers.forEach((subscriberData, ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      hasActive = true;
+    }
+  });
+  return hasActive;
+};
+
+// Start periodic YouTube subscriber count checking (only if there are broadcast subscribers)
 const startYouTubeSubscriberMonitoring = () => {
   const youtubeApiKey = process.env.YOUTUBE_API_KEY;
   const youtubeChannelId = process.env.YOUTUBE_CHANNEL_ID;
@@ -885,15 +923,36 @@ const startYouTubeSubscriberMonitoring = () => {
     return;
   }
   
+  // Check if there are broadcast subscribers
+  if (!hasBroadcastSubscribers()) {
+    console.log('📺 YouTube monitoring not started: No broadcast subscribers connected');
+    return;
+  }
+  
+  // Clear any existing interval
+  if (youtubeMonitoringInterval) {
+    clearInterval(youtubeMonitoringInterval);
+    youtubeMonitoringInterval = null;
+  }
+  
   console.log('📺 Starting YouTube subscriber count monitoring...');
   console.log(`   Channel ID: ${youtubeChannelId}`);
-  console.log(`   Checking every 60 seconds`);
+  console.log(`   Checking every 20 seconds`);
   if (broadcastOnSubscriberChange) {
     console.log(`   📡 Broadcast on subscriber change: ${broadcastType} ${broadcastIntensity}% for ${broadcastDuration}ms`);
   }
   
   // Function to handle subscriber count updates
   const handleSubscriberUpdate = (data) => {
+    // Check if we still have broadcast subscribers before processing
+    if (!hasBroadcastSubscribers()) {
+      console.log('📺 YouTube monitoring stopped: No broadcast subscribers remaining');
+      if (youtubeMonitoringInterval) {
+        clearInterval(youtubeMonitoringInterval);
+        youtubeMonitoringInterval = null;
+      }
+      return;
+    }
     const currentCount = data.subscriberCount;
     const formattedCount = formatSubscriberCount(currentCount);
     const countString = `${formattedCount} (${currentCount.toLocaleString()})`;
@@ -935,13 +994,30 @@ const startYouTubeSubscriberMonitoring = () => {
     });
   
   // Then fetch every 20 seconds
-  setInterval(() => {
+  youtubeMonitoringInterval = setInterval(() => {
+    // Check again if we still have subscribers before each check
+    if (!hasBroadcastSubscribers()) {
+      console.log('📺 YouTube monitoring stopped: No broadcast subscribers remaining');
+      clearInterval(youtubeMonitoringInterval);
+      youtubeMonitoringInterval = null;
+      return;
+    }
+    
     getYouTubeSubscriberCount()
       .then(handleSubscriberUpdate)
       .catch((error) => {
         console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
       });
   }, 20000); // 20 seconds = 20000 milliseconds
+};
+
+// Function to check and start/restart YouTube monitoring when subscribers connect
+const checkAndStartYouTubeMonitoring = () => {
+  if (hasBroadcastSubscribers() && !youtubeMonitoringInterval) {
+    // First active subscriber just connected, start monitoring
+    console.log('📺 Broadcast subscriber connected, starting YouTube monitoring...');
+    startYouTubeSubscriberMonitoring();
+  }
 };
 
 // Initialize Let's Encrypt
@@ -1032,8 +1108,8 @@ startServers().then(servers => {
   httpServer = servers.httpServer;
   httpsServer = servers.httpsServer;
   
-  // Start YouTube subscriber monitoring after servers are up
-  startYouTubeSubscriberMonitoring();
+  // YouTube monitoring will start automatically when first broadcast subscriber connects
+  console.log('📺 YouTube monitoring will start when first broadcast subscriber connects');
 }).catch(error => {
   console.error('❌ Failed to start servers:', error.message);
   process.exit(1);

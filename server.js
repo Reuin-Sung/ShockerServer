@@ -415,16 +415,6 @@ const createWebSocketServer = (server, port) => {
             }));
             break;
           case WS_MESSAGE_TYPES.SUBSCRIBE_BROADCAST:
-            // Validate API key
-            if (!data.apiKey || !validateApiKey(data.apiKey)) {
-              ws.send(JSON.stringify({
-                type: WS_MESSAGE_TYPES.ERROR,
-                message: 'Invalid API key. Valid API key is required to subscribe.',
-                timestamp: new Date().toISOString()
-              }));
-              break;
-            }
-            
             // Parse shockers (can be array or comma-separated string)
             let shockerList = [];
             if (data.shockers) {

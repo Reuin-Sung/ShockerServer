@@ -160,6 +160,67 @@ const broadcastMessage = (intensity, duration, type) => {
   return true;
 };
 
+// Execute broadcast function (extracted from POST endpoint for reuse)
+// This function performs validation and executes the broadcast
+const executeBroadcast = (intensity, duration, type) => {
+  // Validate input
+  if (!intensity || !duration || !type) {
+    return {
+      success: false,
+      error: 'Missing required parameters',
+      message: 'intensity, duration, and type are required'
+    };
+  }
+
+  // Validate type
+  const validTypes = ['shock', 'vibrate'];
+  if (!validTypes.includes(type)) {
+    return {
+      success: false,
+      error: 'Invalid type',
+      message: 'Type must be either "shock" or "vibrate"'
+    };
+  }
+
+  if (!validateIntensity(intensity)) {
+    return {
+      success: false,
+      error: 'Invalid intensity',
+      message: 'Intensity must be a number between 0 and 100'
+    };
+  }
+
+  if (!validateTime(duration)) {
+    return {
+      success: false,
+      error: 'Invalid duration',
+      message: 'Duration must be a number between 300 and 30000 milliseconds'
+    };
+  }
+
+  // Execute the broadcast
+  const success = broadcastMessage(intensity, duration, type);
+  
+  if (success) {
+    return {
+      success: true,
+      message: 'Broadcast sent to all connected clients',
+      broadcast: {
+        intensity: parseInt(intensity),
+        duration: parseInt(duration),
+        type: type,
+        clients: connectedClients.size
+      }
+    };
+  } else {
+    return {
+      success: false,
+      error: 'Broadcast failed',
+      message: 'Failed to send broadcast message'
+    };
+  }
+};
+
 const createWebSocketServer = (server, port) => {
   const wss = new WebSocket.Server({ 
     server,
@@ -352,56 +413,17 @@ app.post('/broadcast', (req, res) => {
     });
   }
 
-  // Validate input
-  if (!intensity || !duration || !type) {
-    return res.status(400).json({
-      error: 'Missing required parameters',
-      message: 'intensity, duration, and type are required'
-    });
-  }
-
-  // Validate type
-  const validTypes = ['shock', 'vibrate'];
-  if (!validTypes.includes(type)) {
-    return res.status(400).json({
-      error: 'Invalid type',
-      message: 'Type must be either "shock" or "vibrate"'
-    });
-  }
-
-  if (!validateIntensity(intensity)) {
-    return res.status(400).json({
-      error: 'Invalid intensity',
-      message: 'Intensity must be a number between 0 and 100'
-    });
-  }
-
-  if (!validateTime(duration)) {
-    return res.status(400).json({
-      error: 'Invalid duration',
-      message: 'Duration must be a number between 300 and 30000 milliseconds'
-    });
-  }
-
-  // Broadcast the message
-  const success = broadcastMessage(intensity, duration, type);
+  // Use the extracted executeBroadcast function
+  const result = executeBroadcast(intensity, duration, type);
   
-  if (success) {
-    res.json({
-      success: true,
-      message: 'Broadcast sent to all connected clients',
-      broadcast: {
-        intensity: parseInt(intensity),
-        duration: parseInt(duration),
-        type: type,
-        clients: connectedClients.size
-      }
-    });
+  if (result.success) {
+    res.json(result);
   } else {
-    res.status(500).json({
-      error: 'Broadcast failed',
-      message: 'Failed to send broadcast message'
-    });
+    const statusCode = result.error === 'Missing required parameters' || 
+                       result.error === 'Invalid type' || 
+                       result.error === 'Invalid intensity' || 
+                       result.error === 'Invalid duration' ? 400 : 500;
+    res.status(statusCode).json(result);
   }
 });
 
@@ -510,10 +532,19 @@ const formatSubscriberCount = (count) => {
   return count.toString();
 };
 
+// Track previous subscriber count for change detection
+let previousSubscriberCount = null;
+
 // Start periodic YouTube subscriber count checking
 const startYouTubeSubscriberMonitoring = () => {
   const youtubeApiKey = process.env.YOUTUBE_API_KEY;
   const youtubeChannelId = process.env.YOUTUBE_CHANNEL_ID;
+  
+  // Broadcast configuration when subscriber count changes
+  const broadcastOnSubscriberChange = process.env.YOUTUBE_BROADCAST_ON_CHANGE === 'true';
+  const broadcastIntensity = parseInt(process.env.YOUTUBE_BROADCAST_INTENSITY || '50');
+  const broadcastDuration = parseInt(process.env.YOUTUBE_BROADCAST_DURATION || '1000');
+  const broadcastType = process.env.YOUTUBE_BROADCAST_TYPE || 'vibrate';
   
   if (!youtubeApiKey || !youtubeChannelId) {
     console.log('⚠️  YouTube monitoring not started: YOUTUBE_API_KEY or YOUTUBE_CHANNEL_ID not set in environment');
@@ -522,27 +553,56 @@ const startYouTubeSubscriberMonitoring = () => {
   
   console.log('📺 Starting YouTube subscriber count monitoring...');
   console.log(`   Channel ID: ${youtubeChannelId}`);
-  console.log(`   Checking every 20 seconds`);
+  console.log(`   Checking every 60 seconds`);
+  if (broadcastOnSubscriberChange) {
+    console.log(`   📡 Broadcast on subscriber change: ${broadcastType} ${broadcastIntensity}% for ${broadcastDuration}ms`);
+  }
+  
+  // Function to handle subscriber count updates
+  const handleSubscriberUpdate = (data) => {
+    const currentCount = data.subscriberCount;
+    const formattedCount = formatSubscriberCount(currentCount);
+    const countString = `${formattedCount} (${currentCount.toLocaleString()})`;
+    
+    // Check if subscriber count changed
+    if (previousSubscriberCount !== null && previousSubscriberCount !== currentCount) {
+      const change = currentCount - previousSubscriberCount;
+      const changeSign = change > 0 ? '+' : '';
+      console.log(`📊 YouTube Subscribers: ${countString} | Channel: ${data.channelName} | Change: ${changeSign}${change.toLocaleString()}`);
+      
+      // Execute broadcast if enabled
+      if (broadcastOnSubscriberChange) {
+        console.log(`🎉 Subscriber count changed! Triggering broadcast...`);
+        const result = executeBroadcast(broadcastIntensity, broadcastDuration, broadcastType);
+        if (result.success) {
+          console.log(`✅ Broadcast sent: ${broadcastType} ${broadcastIntensity}% for ${broadcastDuration}ms`);
+        } else {
+          console.error(`❌ Broadcast failed: ${result.message}`);
+        }
+      }
+    } else {
+      console.log(`📊 YouTube Subscribers: ${countString} | Channel: ${data.channelName}`);
+    }
+    
+    // Update previous count
+    previousSubscriberCount = currentCount;
+  };
   
   // Fetch immediately
   getYouTubeSubscriberCount()
-    .then((data) => {
-      console.log(`📊 YouTube Subscribers: ${formatSubscriberCount(data.subscriberCount)} (${data.subscriberCount.toLocaleString()}) | Channel: ${data.channelName}`);
-    })
+    .then(handleSubscriberUpdate)
     .catch((error) => {
       console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
     });
   
-  // Then fetch every 20 seconds
+  // Then fetch every 60 seconds
   setInterval(() => {
     getYouTubeSubscriberCount()
-      .then((data) => {
-        console.log(`📊 YouTube Subscribers: ${formatSubscriberCount(data.subscriberCount)} (${data.subscriberCount.toLocaleString()}) | Channel: ${data.channelName}`);
-      })
+      .then(handleSubscriberUpdate)
       .catch((error) => {
         console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
       });
-  }, 20000); // 20 seconds = 20000 milliseconds
+  }, 60000); // 60 seconds = 60000 milliseconds
 };
 
 // Initialize Let's Encrypt

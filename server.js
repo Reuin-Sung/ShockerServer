@@ -214,7 +214,9 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
       method: 'POST',
       headers: {
         'OpenShockToken': apiToken,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'ShockerServer/1.0',
+        'Accept': 'application/json'
       }
     };
     
@@ -222,7 +224,10 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
     console.log('📤 OpenShock API Request:');
     console.log(`   URL: https://${options.hostname}${options.path}`);
     console.log(`   Method: ${options.method}`);
-    console.log(`   Headers: OpenShockToken: ${apiToken.substring(0, 8)}..., Content-Type: ${options.headers['Content-Type']}`);
+    console.log(`   Headers:`);
+    console.log(`     OpenShockToken: ${apiToken.substring(0, 8)}...${apiToken.substring(apiToken.length - 4)} (length: ${apiToken.length})`);
+    console.log(`     Content-Type: ${options.headers['Content-Type']}`);
+    console.log(`     User-Agent: ${options.headers['User-Agent']}`);
     console.log(`   Payload: ${payload}`);
     
     const req = https.request(options, (res) => {

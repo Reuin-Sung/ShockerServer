@@ -218,6 +218,13 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
       }
     };
     
+    // Log the API request before sending
+    console.log('📤 OpenShock API Request:');
+    console.log(`   URL: https://${options.hostname}${options.path}`);
+    console.log(`   Method: ${options.method}`);
+    console.log(`   Headers: OpenShockToken: ${apiToken.substring(0, 8)}..., Content-Type: ${options.headers['Content-Type']}`);
+    console.log(`   Payload: ${payload}`);
+    
     const req = https.request(options, (res) => {
       let data = '';
       

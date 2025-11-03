@@ -45,7 +45,7 @@ let shockerState = {
 let wssHttp = null;
 let wssHttps = null;
 const connectedClients = new Set();
-// Map of WebSocket -> {apiKey, shockers: []}
+// Map of WebSocket -> {apiKey, openshockToken, shockers: []}
 const broadcastSubscribers = new Map();
 
 // WebSocket message types
@@ -151,47 +151,44 @@ const broadcastToSubscribers = (message) => {
   return sentCount;
 };
 
-// Collect all shockers from all subscribers
-const collectSubscriberShockers = () => {
-  const allShockers = new Set();
+// Collect shockers grouped by OpenShock API token
+const collectSubscriberShockersByToken = () => {
+  const shockersByToken = new Map(); // Map of token -> Set of shockers
   broadcastSubscribers.forEach((subscriberData, ws) => {
-    if (ws.readyState === WebSocket.OPEN && subscriberData.shockers) {
+    if (ws.readyState === WebSocket.OPEN && subscriberData.shockers && subscriberData.openshockToken) {
+      const token = subscriberData.openshockToken;
+      if (!shockersByToken.has(token)) {
+        shockersByToken.set(token, new Set());
+      }
       subscriberData.shockers.forEach(shockerId => {
-        allShockers.add(shockerId);
+        shockersByToken.get(token).add(shockerId);
       });
     }
   });
-  return Array.from(allShockers);
+  // Convert Sets to Arrays
+  const result = new Map();
+  shockersByToken.forEach((shockers, token) => {
+    result.set(token, Array.from(shockers));
+  });
+  return result;
 };
 
 // Send control command to OpenShock API
-const sendOpenShockControl = (shockers, intensity, duration, type) => {
+const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => {
   return new Promise((resolve, reject) => {
-    const apiToken = process.env.OPENSHOCK_API_TOKEN;
-    const openshockShockers = process.env.OPENSHOCK_SHOCKER_IDS;
-    
-    // Check if OpenShock integration is enabled
-    if (!apiToken || !openshockShockers) {
-      resolve({ enabled: false, message: 'OpenShock API not configured' });
+    // Check if OpenShock API token is provided
+    if (!apiToken) {
+      resolve({ enabled: false, message: 'OpenShock API token not provided' });
       return;
     }
     
-    // Parse shocker IDs (comma-separated list from env)
-    let shockerList;
-    try {
-      shockerList = openshockShockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
-    } catch (error) {
-      reject(new Error(`Failed to parse OpenShock shocker IDs: ${error.message}`));
-      return;
-    }
-    
-    // If specific shockers are provided, use them; otherwise use env list
-    const shockerIds = shockers && shockers.length > 0 ? shockers : shockerList;
-    
-    if (shockerIds.length === 0) {
+    // Validate shockers are provided
+    if (!shockers || shockers.length === 0) {
       resolve({ enabled: false, message: 'No shockers specified' });
       return;
     }
+    
+    const shockerIds = shockers;
     
     // OpenShock API expects duration in milliseconds (based on API docs)
     // Convert type to match OpenShock API format
@@ -298,24 +295,42 @@ const broadcastMessage = async (intensity, duration, type) => {
     console.log(`   ✅ Sent to ${sentCount} subscriber(s)`);
   }
   
-  // Collect all shockers from subscribed clients
-  const allShockers = collectSubscriberShockers();
+  // Collect shockers grouped by OpenShock API token
+  const shockersByToken = collectSubscriberShockersByToken();
   
-  // Send to OpenShock API if there are any shockers from subscribers
-  if (allShockers.length > 0) {
+  // Send to OpenShock API for each unique token
+  if (shockersByToken.size > 0) {
+    const apiCalls = [];
+    shockersByToken.forEach((shockers, token) => {
+      apiCalls.push(
+        sendOpenShockControl(token, shockers, intensity, duration, type)
+          .then((result) => {
+            if (result.enabled) {
+              if (result.success) {
+                console.log(`✅ OpenShock API: Control sent to ${result.shockers.length} shocker(s) with token ${token.substring(0, 8)}...`);
+              } else {
+                const errorMsg = (result.error && result.error.message) ? result.error.message : 'Unknown error';
+                console.error(`❌ OpenShock API: Control failed for token ${token.substring(0, 8)}... - ${errorMsg}`);
+              }
+            }
+            return result;
+          })
+          .catch((error) => {
+            console.error(`❌ OpenShock API error for token ${token.substring(0, 8)}...: ${error.message}`);
+            return { enabled: false, error: error.message };
+          })
+      );
+    });
+    
+    console.log(`📡 Sending to OpenShock API: ${shockersByToken.size} token(s) with ${Array.from(shockersByToken.values()).reduce((sum, s) => sum + s.length, 0)} total shocker(s)`);
+    
     try {
-      const openshockResult = await sendOpenShockControl(allShockers, intensity, duration, type);
-      if (openshockResult.enabled) {
-        if (openshockResult.success) {
-          console.log(`✅ OpenShock API: Control sent to ${openshockResult.shockers.length} shocker(s) from subscribers`);
-        } else {
-          const errorMsg = (openshockResult.error && openshockResult.error.message) ? openshockResult.error.message : 'Unknown error';
-          console.error(`❌ OpenShock API: Control failed - ${errorMsg}`);
-        }
-      }
+      await Promise.all(apiCalls);
     } catch (error) {
-      console.error(`❌ OpenShock API error: ${error.message}`);
+      console.error(`❌ OpenShock API batch error: ${error.message}`);
     }
+  } else {
+    console.log(`⚠️  No shockers available (no active subscribers with shockers and OpenShock tokens)`);
   }
   
   return true;
@@ -425,21 +440,34 @@ const createWebSocketServer = (server, port) => {
               }
             }
             
-            // If no shockers provided, use default from environment
+            // Validate that shockers are provided
             if (shockerList.length === 0) {
-              const defaultShockers = process.env.OPENSHOCK_SHOCKER_IDS;
-              if (defaultShockers) {
-                shockerList = defaultShockers.split(',').map(id => id.trim()).filter(id => id.length > 0);
-              }
+              ws.send(JSON.stringify({
+                type: WS_MESSAGE_TYPES.ERROR,
+                message: 'Shockers are required. Provide shockers as an array or comma-separated string.',
+                timestamp: new Date().toISOString()
+              }));
+              break;
             }
             
-            // Store subscription with API key and shockers
+            // Validate that OpenShock API token is provided
+            if (!data.openshockToken || typeof data.openshockToken !== 'string' || data.openshockToken.trim().length === 0) {
+              ws.send(JSON.stringify({
+                type: WS_MESSAGE_TYPES.ERROR,
+                message: 'OpenShock API token is required. Provide openshockToken in the subscription message.',
+                timestamp: new Date().toISOString()
+              }));
+              break;
+            }
+            
+            // Store subscription with API key, OpenShock token, and shockers
             broadcastSubscribers.set(ws, {
               apiKey: data.apiKey,
+              openshockToken: data.openshockToken.trim(),
               shockers: shockerList
             });
             
-            console.log(`📡 Client ${clientAddress} subscribed to broadcasts with ${shockerList.length} shocker(s) (${broadcastSubscribers.size} total)`);
+            console.log(`📡 Client ${clientAddress} subscribed to broadcasts with ${shockerList.length} shocker(s) and OpenShock token (${broadcastSubscribers.size} total)`);
             ws.send(JSON.stringify({
               type: WS_MESSAGE_TYPES.SUBSCRIBED,
               message: 'Successfully subscribed to broadcasts',

@@ -190,15 +190,21 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
     
     const shockerIds = shockers;
     
-    // OpenShock API expects duration in milliseconds (based on API docs)
-    // Convert type to match OpenShock API format
-    const openshockType = type === 'vibrate' ? 'vibrate' : 'shock';
+    // OpenShock API expects duration in milliseconds
+    // Convert type to match OpenShock API format (capitalized: "Shock" or "Vibrate")
+    const openshockType = type === 'vibrate' ? 'Vibrate' : 'Shock';
     
-    const payload = JSON.stringify({
-      shockers: shockerIds,
+    // Format shocks array with each shocker as an object
+    const shocksArray = shockerIds.map(shockerId => ({
+      id: shockerId,
+      type: openshockType,
       intensity: parseInt(intensity),
       duration: parseInt(duration),
-      type: openshockType
+      exclusive: true
+    }));
+    
+    const payload = JSON.stringify({
+      shocks: shocksArray
     });
     
     const options = {
@@ -206,7 +212,7 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
       path: '/2/shockers/control',
       method: 'POST',
       headers: {
-        'Open-Shock-Token': apiToken,
+        'OpenShockToken': apiToken,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(payload)
       }

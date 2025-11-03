@@ -205,7 +205,7 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
     
     const payload = JSON.stringify({
       shocks: shocksArray,
-      customName: 'From shocekr.resng.gay <3'
+      customName: 'From shocekr.resung.gay <3'
     });
     
     const options = {
@@ -219,16 +219,6 @@ const sendOpenShockControl = (apiToken, shockers, intensity, duration, type) => 
         'Accept': 'application/json'
       }
     };
-    
-    // Log the API request before sending
-    console.log('📤 OpenShock API Request:');
-    console.log(`   URL: https://${options.hostname}${options.path}`);
-    console.log(`   Method: ${options.method}`);
-    console.log(`   Headers:`);
-    console.log(`     OpenShockToken: ${apiToken.substring(0, 8)}...${apiToken.substring(apiToken.length - 4)} (length: ${apiToken.length})`);
-    console.log(`     Content-Type: ${options.headers['Content-Type']}`);
-    console.log(`     User-Agent: ${options.headers['User-Agent']}`);
-    console.log(`   Payload: ${payload}`);
     
     const req = https.request(options, (res) => {
       let data = '';

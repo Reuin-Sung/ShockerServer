@@ -446,6 +446,105 @@ app.use('*', (req, res) => {
   });
 });
 
+// YouTube subscriber count functionality
+const getYouTubeSubscriberCount = () => {
+  return new Promise((resolve, reject) => {
+    const youtubeApiKey = process.env.YOUTUBE_API_KEY;
+    const youtubeChannelId = process.env.YOUTUBE_CHANNEL_ID;
+    
+    if (!youtubeApiKey || !youtubeChannelId) {
+      reject(new Error('YouTube API key or Channel ID not configured. Set YOUTUBE_API_KEY and YOUTUBE_CHANNEL_ID in .env'));
+      return;
+    }
+    
+    const url = `https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&id=${encodeURIComponent(youtubeChannelId)}&key=${encodeURIComponent(youtubeApiKey)}`;
+    
+    https.get(url, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          const response = JSON.parse(data);
+          
+          if (response.error) {
+            reject(new Error(`YouTube API Error: ${response.error.message || 'Unknown error'}`));
+            return;
+          }
+          
+          if (!response.items || response.items.length === 0) {
+            reject(new Error('Channel not found'));
+            return;
+          }
+          
+          const channel = response.items[0];
+          const subscriberCount = parseInt(channel.statistics.subscriberCount);
+          const channelName = channel.snippet.title;
+          
+          resolve({
+            subscriberCount,
+            channelName,
+            viewCount: parseInt(channel.statistics.viewCount),
+            videoCount: parseInt(channel.statistics.videoCount)
+          });
+        } catch (error) {
+          reject(new Error(`Failed to parse YouTube API response: ${error.message}`));
+        }
+      });
+    }).on('error', (error) => {
+      reject(new Error(`Failed to fetch YouTube data: ${error.message}`));
+    });
+  });
+};
+
+// Function to format subscriber count (e.g., 1234567 -> "1.23M")
+const formatSubscriberCount = (count) => {
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(2) + 'M';
+  } else if (count >= 1000) {
+    return (count / 1000).toFixed(2) + 'K';
+  }
+  return count.toString();
+};
+
+// Start periodic YouTube subscriber count checking
+const startYouTubeSubscriberMonitoring = () => {
+  const youtubeApiKey = process.env.YOUTUBE_API_KEY;
+  const youtubeChannelId = process.env.YOUTUBE_CHANNEL_ID;
+  
+  if (!youtubeApiKey || !youtubeChannelId) {
+    console.log('⚠️  YouTube monitoring not started: YOUTUBE_API_KEY or YOUTUBE_CHANNEL_ID not set in environment');
+    return;
+  }
+  
+  console.log('📺 Starting YouTube subscriber count monitoring...');
+  console.log(`   Channel ID: ${youtubeChannelId}`);
+  console.log(`   Checking every 20 seconds`);
+  
+  // Fetch immediately
+  getYouTubeSubscriberCount()
+    .then((data) => {
+      console.log(`📊 YouTube Subscribers: ${formatSubscriberCount(data.subscriberCount)} (${data.subscriberCount.toLocaleString()}) | Channel: ${data.channelName}`);
+    })
+    .catch((error) => {
+      console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
+    });
+  
+  // Then fetch every 20 seconds
+  setInterval(() => {
+    getYouTubeSubscriberCount()
+      .then((data) => {
+        console.log(`📊 YouTube Subscribers: ${formatSubscriberCount(data.subscriberCount)} (${data.subscriberCount.toLocaleString()}) | Channel: ${data.channelName}`);
+      })
+      .catch((error) => {
+        console.error(`❌ Error fetching YouTube subscriber count: ${error.message}`);
+      });
+  }, 20000); // 20 seconds = 20000 milliseconds
+};
+
 // Initialize Let's Encrypt
 let sslOptions = null;
 const domain = process.env.DOMAIN || 'localhost';
@@ -533,6 +632,9 @@ const startServers = async () => {
 startServers().then(servers => {
   httpServer = servers.httpServer;
   httpsServer = servers.httpsServer;
+  
+  // Start YouTube subscriber monitoring after servers are up
+  startYouTubeSubscriberMonitoring();
 }).catch(error => {
   console.error('❌ Failed to start servers:', error.message);
   process.exit(1);
